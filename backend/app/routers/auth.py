@@ -74,6 +74,28 @@ def dev_login(request: Request) -> TokenResponse:
     return TokenResponse(access_token=token, expires_in=ttl)
 
 
+class PublicConfig(BaseModel):
+    google_client_id: str
+    allowed_email_domains: list[str]
+
+
+@router.get("/config", response_model=PublicConfig)
+def public_config() -> PublicConfig:
+    """Client configuration the sign-in page needs before anyone is signed in.
+
+    Served at runtime rather than compiled into the frontend bundle. Next.js
+    inlines NEXT_PUBLIC_* at build time, which means a Dockerfile build needs
+    the value as a --build-arg — easy to get wrong, and it makes rotating the
+    OAuth client a rebuild rather than a restart. None of this is secret: the
+    client id is visible in the page source of every Google sign-in on the web.
+    """
+    s = get_settings()
+    return PublicConfig(
+        google_client_id=s.google_oauth_client_id,
+        allowed_email_domains=s.domains,
+    )
+
+
 class MeResponse(BaseModel):
     employee_id: str
     full_name: str

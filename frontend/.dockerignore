@@ -1,0 +1,12 @@
+# Without this, `COPY . .` copies the local macOS node_modules over the ones
+# installed inside the image. The merged tree is broken and `next build` fails
+# with "Cannot find module '../server/require-hook'".
+node_modules
+.next
+out
+
+# Local settings and build artefacts never belong in an image.
+.env
+.env.*
+npm-debug.log*
+.DS_Store

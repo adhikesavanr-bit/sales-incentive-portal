@@ -296,3 +296,38 @@ class TestEmptyDashboardState:
         from app.models.schemas import MonthStatus
         for st in MonthStatus:
             assert self._state(monkeypatch, st)["month_status"] == st.value
+
+
+class TestPublicConfig:
+    """The sign-in page needs the client id before anyone is authenticated."""
+
+    def test_it_returns_the_configured_client_id(self, monkeypatch):
+        from app.config import get_settings
+        from app.routers import auth as auth_router
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "abc.apps.googleusercontent.com")
+        out = auth_router.public_config()
+        assert out.google_client_id == "abc.apps.googleusercontent.com"
+
+    def test_it_exposes_no_secret(self, monkeypatch):
+        """This endpoint is unauthenticated; nothing sensitive may appear."""
+        from app.config import get_settings
+        from app.routers import auth as auth_router
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "super-secret-value")
+        monkeypatch.setenv("JWT_SECRET", "another-secret")
+        body = auth_router.public_config().model_dump_json()
+        assert "super-secret-value" not in body
+        assert "another-secret" not in body
+
+    def test_it_reports_the_allowed_domains(self, monkeypatch):
+        from app.config import get_settings
+        from app.routers import auth as auth_router
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("ALLOWED_EMAIL_DOMAINS", "marrowmed.com,dailyrounds.org")
+        assert auth_router.public_config().allowed_email_domains == [
+            "marrowmed.com", "dailyrounds.org",
+        ]

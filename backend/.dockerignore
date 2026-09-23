@@ -1,0 +1,14 @@
+# The virtual environment is built for macOS and is meaningless in the image;
+# the Dockerfile installs from requirements.txt instead.
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+
+# Never copy secrets into an image.
+.env
+.env.*
+
+# Not needed at runtime.
+tests
+.DS_Store

@@ -29,9 +29,23 @@ export default function LoginPage() {
     [router],
   );
 
-  const initGoogle = useCallback(() => {
+  // The client id comes from the API at runtime, not from the build. See the
+  // note on /api/auth/config for why.
+  const initGoogle = useCallback(async () => {
+    let clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+    try {
+      clientId = (await api.config()).google_client_id || clientId;
+    } catch {
+      /* fall back to the build-time value, if there was one */
+    }
+    if (!clientId) {
+      setError(
+        "Google sign-in is not configured. Ask Finance to set the OAuth client id on the API.",
+      );
+      return;
+    }
     window.google?.accounts.id.initialize({
-      client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID,
+      client_id: clientId,
       callback: handleCredential,
     });
     window.google?.accounts.id.renderButton(

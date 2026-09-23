@@ -3,7 +3,9 @@
  * credential, project id or dataset name ever reaches this layer.
  */
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// Same origin. Next.js rewrites /api/* to the backend at runtime — see
+// next.config.mjs. Nothing about the API location is compiled into this bundle.
+const BASE = "";
 const TOKEN_KEY = "incentive_portal_token";
 
 export class ApiError extends Error {
@@ -59,6 +61,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id_token: idToken }),
     }),
+
+  config: () =>
+    request<{ google_client_id: string; allowed_email_domains: string[] }>(
+      "/api/auth/config",
+    ),
 
   devLogin: () =>
     request<{ access_token: string; expires_in: number }>("/api/auth/dev-login", {
@@ -130,7 +137,7 @@ export const api = {
   audit: (limit = 200) => request<AuditRow[]>(`/api/audit?limit=${limit}`),
 
   exportUrl: (report: string, period: string) =>
-    `${BASE}/api/export/${report}?period=${period}`,
+    `/api/export/${report}?period=${period}`,
 };
 
 // --- types ----------------------------------------------------------------
