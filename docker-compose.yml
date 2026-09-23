@@ -1,0 +1,21 @@
+# Local development. The backend reads a service-account key mounted read-only
+# from ./secrets, which is gitignored; nothing is baked into an image.
+services:
+  api:
+    build: ./backend
+    ports: ["8000:8080"]
+    env_file: ./backend/.env
+    volumes:
+      - ./backend/app:/srv/app:ro
+      - ./secrets:/secrets:ro
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports: ["3000:3000"]
+    env_file: ./frontend/.env.local
+    depends_on: [api]

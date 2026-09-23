@@ -1,0 +1,16 @@
+# Dependencies for the offline verification only (verify.sh).
+#
+# Deliberately unpinned and deliberately smaller than requirements.txt: the
+# checks need the engines, the dataframe tooling and the test runner, not the
+# production web stack. Leaving versions open lets pip pick builds that exist
+# for whatever Python you have, whereas the pinned set in requirements.txt
+# targets the Python 3.12 in the Dockerfile.
+pandas
+openpyxl
+pydantic
+pydantic-settings
+google-cloud-bigquery
+db-dtypes
+PyJWT
+fastapi
+pytest

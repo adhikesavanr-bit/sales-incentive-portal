@@ -1,0 +1,11 @@
+{
+  "note": "Roles that cannot be derived from the sales or target files. Finance and admin staff own no coupons and carry no target, so they appear in no source workbook except the employee email list; bootstrap creates them from here. Names and emails are still read from the email list so this file never goes stale on a rename.",
+  "roles": [
+    {
+      "employee_id": "NHP594",
+      "role": "SUPER_ADMIN",
+      "designation": "Finance",
+      "reason": "Owns the monthly incentive process end to end: uploads sales, recalculates, locks the month, and is the only person who can reopen a locked one."
+    }
+  ]
+}

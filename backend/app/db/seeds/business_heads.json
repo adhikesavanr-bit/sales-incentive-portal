@@ -1,0 +1,14 @@
+{
+  "note": "Business Heads are not identifiable from the sales or target files; supplied by Finance, Sep 2026. Every field employee's business_head_id resolves here unless a more specific mapping exists.",
+  "business_heads": [
+    {
+      "employee_id": "NHP118",
+      "full_name": "Faisal Anis",
+      "email": "faisal@marrowmed.com",
+      "role": "BUSINESS_HEAD",
+      "vertical": "Marrow",
+      "is_active": true
+    }
+  ],
+  "default_business_head_id": "NHP118"
+}

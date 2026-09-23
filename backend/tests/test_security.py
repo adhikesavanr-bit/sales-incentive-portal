@@ -1,0 +1,298 @@
+"""Access control: role permissions and scope predicates.
+
+The threat these tests exist for: a BDE editing `employee_id=` in a URL or an
+API call and receiving someone else's numbers.
+"""
+from __future__ import annotations
+
+import pytest
+
+from app.auth.rbac import (
+    Permission,
+    Principal,
+    ROLE_PERMISSIONS,
+    has_permission,
+    visible_employee_sql,
+)
+from app.models.schemas import Role
+
+
+def principal(role: Role, employee_id="NHP001", **kw) -> Principal:
+    return Principal(
+        email=f"{employee_id.lower()}@marrowmed.com",
+        employee_id=employee_id,
+        full_name="Test",
+        role=role,
+        permissions=set(ROLE_PERMISSIONS[role]),
+        **kw,
+    )
+
+
+class TestPermissionMatrix:
+    """The matrix from the brief, asserted row by row."""
+
+    @pytest.mark.parametrize("role", list(Role))
+    def test_everyone_sees_their_own_dashboard(self, role):
+        assert has_permission(role, Permission.VIEW_OWN)
+
+    @pytest.mark.parametrize("role,expected", [
+        (Role.BDE, False), (Role.SUB_MANAGER, True), (Role.REGIONAL_MANAGER, True),
+        (Role.ZONAL_MANAGER, True), (Role.BUSINESS_HEAD, True), (Role.FINANCE_ADMIN, True),
+    ])
+    def test_team_data(self, role, expected):
+        assert has_permission(role, Permission.VIEW_TEAM) is expected
+
+    @pytest.mark.parametrize("role,expected", [
+        (Role.BDE, False), (Role.SUB_MANAGER, False), (Role.REGIONAL_MANAGER, True),
+        (Role.ZONAL_MANAGER, True), (Role.BUSINESS_HEAD, True), (Role.FINANCE_ADMIN, True),
+    ])
+    def test_region_data(self, role, expected):
+        assert has_permission(role, Permission.VIEW_REGION) is expected
+
+    @pytest.mark.parametrize("role,expected", [
+        (Role.BDE, False), (Role.REGIONAL_MANAGER, False), (Role.ZONAL_MANAGER, True),
+        (Role.BUSINESS_HEAD, True), (Role.FINANCE_ADMIN, True),
+    ])
+    def test_zone_data(self, role, expected):
+        assert has_permission(role, Permission.VIEW_ZONE) is expected
+
+    @pytest.mark.parametrize("role", [
+        Role.BDE, Role.SUB_MANAGER, Role.REGIONAL_MANAGER,
+        Role.ZONAL_MANAGER, Role.BUSINESS_HEAD,
+    ])
+    def test_only_finance_uploads_sales(self, role):
+        assert not has_permission(role, Permission.UPLOAD_SALES)
+        assert has_permission(Role.FINANCE_ADMIN, Permission.UPLOAD_SALES)
+
+    @pytest.mark.parametrize("perm", [
+        Permission.MANAGE_EMPLOYEES, Permission.MANAGE_RULES,
+        Permission.RECALCULATE, Permission.LOCK_MONTH,
+    ])
+    def test_managers_cannot_administer(self, perm):
+        assert not has_permission(Role.ZONAL_MANAGER, perm)
+        assert has_permission(Role.FINANCE_ADMIN, perm)
+
+    def test_only_super_admin_reopens_a_locked_month(self):
+        assert has_permission(Role.SUPER_ADMIN, Permission.REOPEN_MONTH)
+        assert not has_permission(Role.FINANCE_ADMIN, Permission.REOPEN_MONTH)
+
+    def test_a_bde_cannot_approve_its_own_target(self):
+        assert not has_permission(Role.BDE, Permission.APPROVE_TARGETS)
+        assert not has_permission(Role.BDE, Permission.PROPOSE_TARGETS)
+
+
+class TestScopePredicate:
+    """The predicate is built from the principal only — no request input."""
+
+    def test_bde_scope_is_a_single_employee(self):
+        sql, params = visible_employee_sql(principal(Role.BDE))
+        assert sql == "h.employee_id = @scope_id"
+        assert params == {"scope_id": "NHP001"}
+
+    def test_submanager_scope_is_their_direct_reports_plus_self(self):
+        sql, params = visible_employee_sql(principal(Role.SUB_MANAGER, "NHP002"))
+        assert "h.submanager_id = @scope_id" in sql
+        assert params["scope_id"] == "NHP002"
+
+    def test_rm_scope_keys_on_rm_id(self):
+        sql, _ = visible_employee_sql(principal(Role.REGIONAL_MANAGER, "NHP003"))
+        assert "h.rm_id = @scope_id" in sql
+        assert "h.zm_id" not in sql
+
+    def test_zm_scope_keys_on_zm_id(self):
+        sql, _ = visible_employee_sql(principal(Role.ZONAL_MANAGER, "NHP004"))
+        assert "h.zm_id = @scope_id" in sql
+
+    def test_business_head_is_bounded_by_vertical(self):
+        sql, params = visible_employee_sql(
+            principal(Role.BUSINESS_HEAD, "NHP005", vertical="Marrow")
+        )
+        assert sql == "h.vertical = @scope_vertical"
+        assert params == {"scope_vertical": "Marrow"}
+
+    def test_finance_sees_everything(self):
+        sql, params = visible_employee_sql(principal(Role.FINANCE_ADMIN, "NHP999"))
+        assert sql == "TRUE" and params == {}
+
+    @pytest.mark.parametrize("role", list(Role))
+    def test_predicate_never_embeds_a_literal(self, role):
+        """Every value is a bound parameter, so scope cannot be SQL-injected."""
+        sql, params = visible_employee_sql(principal(role, vertical="Marrow"))
+        assert "'" not in sql and '"' not in sql
+        for key in params:
+            assert f"@{key}" in sql or sql == "TRUE"
+
+    def test_a_bde_cannot_widen_scope_by_claiming_a_region(self):
+        """Extra attributes on the principal do not grant reach."""
+        p = principal(Role.BDE, region="R1", zone="Z1", vertical="Marrow")
+        sql, params = visible_employee_sql(p)
+        assert sql == "h.employee_id = @scope_id"
+        assert "region" not in sql and "vertical" not in sql
+
+
+class TestScopeEnforcement:
+    """`is_in_scope` is the gate the employee-id route parameter passes through."""
+
+    def test_out_of_scope_lookup_produces_a_bounded_query(self, monkeypatch):
+        captured = {}
+
+        def fake_query(sql, params=None):
+            captured["sql"], captured["params"] = sql, params or {}
+            return []
+
+        from app.services import employees as svc
+        monkeypatch.setattr(svc.bq, "query", fake_query)
+
+        p = principal(Role.BDE)
+        sql, params = visible_employee_sql(p)
+        assert svc.is_in_scope("NHP002", sql, params) is False
+        # the caller's own id constrains the query; the requested id is bound
+        assert captured["params"]["scope_id"] == "NHP001"
+        assert captured["params"]["target"] == "NHP002"
+        assert "@target" in captured["sql"]
+
+    def test_in_scope_lookup_returns_true(self, monkeypatch):
+        from app.services import employees as svc
+        monkeypatch.setattr(svc.bq, "query", lambda sql, params=None: [{"1": 1}])
+        p = principal(Role.REGIONAL_MANAGER, "NHP003")
+        sql, params = visible_employee_sql(p)
+        assert svc.is_in_scope("NHP001", sql, params) is True
+
+
+class TestDevLogin:
+    """The local sign-in must be unreachable anywhere but a developer machine.
+
+    These call the endpoint function directly with a stub request rather than
+    through TestClient, because faking the caller's address is the whole point
+    of the test and TestClient's support for that varies by version.
+    """
+
+    @staticmethod
+    def _request(host="127.0.0.1"):
+        class _Client:
+            def __init__(self, h):
+                self.host = h
+
+        class _Request:
+            def __init__(self, h):
+                self.client = _Client(h) if h else None
+
+        return _Request(host)
+
+    @staticmethod
+    def _setup(monkeypatch, *, allow, email="a@marrowmed.com", in_master=True):
+        from app.config import get_settings
+        from app.models.schemas import Employee
+        from app.routers import auth as auth_router
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("ALLOW_DEV_LOGIN", "true" if allow else "false")
+        # Set it empty rather than deleting it. Deleting only removes the
+        # environment variable; pydantic-settings then falls back to the
+        # developer's own .env, so the test would pass or fail depending on
+        # whose machine it ran on. An explicit empty value overrides both.
+        monkeypatch.setenv("DEV_LOGIN_EMAIL", email or "")
+        monkeypatch.setattr(
+            auth_router.employee_service, "get_by_email",
+            lambda e: Employee(employee_id="NHP001", full_name="A") if in_master else None,
+        )
+        monkeypatch.setattr(auth_router.audit, "record", lambda *a, **k: None)
+        return auth_router
+
+    def test_disabled_by_default_the_route_404s(self, monkeypatch):
+        from fastapi import HTTPException
+        r = self._setup(monkeypatch, allow=False)
+        with pytest.raises(HTTPException) as exc:
+            r.dev_login(self._request())
+        assert exc.value.status_code == 404
+
+    def test_enabled_it_issues_a_token(self, monkeypatch):
+        r = self._setup(monkeypatch, allow=True)
+        assert r.dev_login(self._request()).access_token
+
+    def test_refused_from_a_non_loopback_address(self, monkeypatch):
+        from fastapi import HTTPException
+        r = self._setup(monkeypatch, allow=True)
+        with pytest.raises(HTTPException) as exc:
+            r.dev_login(self._request("10.0.0.7"))
+        assert exc.value.status_code == 403
+
+    def test_refused_for_an_address_not_in_the_employee_master(self, monkeypatch):
+        from fastapi import HTTPException
+        r = self._setup(monkeypatch, allow=True, in_master=False)
+        with pytest.raises(HTTPException) as exc:
+            r.dev_login(self._request())
+        assert exc.value.status_code == 403
+
+    def test_enabled_without_an_email_is_still_closed(self, monkeypatch):
+        """ALLOW_DEV_LOGIN alone opens nothing — an address is also required."""
+        from fastapi import HTTPException
+        r = self._setup(monkeypatch, allow=True, email="")
+        with pytest.raises(HTTPException) as exc:
+            r.dev_login(self._request())
+        assert exc.value.status_code == 404
+
+    def test_ipv6_loopback_is_accepted(self, monkeypatch):
+        r = self._setup(monkeypatch, allow=True)
+        assert r.dev_login(self._request("::1")).access_token
+
+
+class TestDashboardQueryQualification:
+    """Columns shared by both sides of the join must be table-qualified.
+
+    v_employee_hierarchy and monthly_incentive both carry employee_id,
+    is_active, region, zone and designation. A bare reference is an ambiguous
+    column error that only appears at runtime, against real BigQuery.
+    """
+
+    SHARED = ["is_active", "region", "zone", "designation"]
+
+    def test_metrics_block_qualifies_every_shared_column(self):
+        import re
+        from app.services.dashboards import _METRICS
+        for col in self.SHARED:
+            for hit in re.finditer(rf"(?<![.\w]){col}\b", _METRICS):
+                start = max(0, hit.start() - 2)
+                assert _METRICS[start:hit.start()] in ("m.", "h."), (
+                    f"{col} is unqualified in _METRICS"
+                )
+
+    def test_headcount_counts_the_incentive_row_not_the_employee_record(self):
+        """An employee can be active in the master but have no sales this month."""
+        from app.services.dashboards import _METRICS
+        assert "m.is_active" in _METRICS
+        assert "h.is_active" not in _METRICS
+
+
+class TestEmptyDashboardState:
+    """An absent row means two different things; the message must say which."""
+
+    @staticmethod
+    def _state(monkeypatch, status):
+        from app.models.schemas import MonthStatus
+        from app.routers import dashboards as router
+        monkeypatch.setattr(router.month, "get_status", lambda p: status)
+        return router._empty_state("NHP001", "2026-08")
+
+    def test_an_open_month_reads_as_not_published(self, monkeypatch):
+        from app.models.schemas import MonthStatus
+        out = self._state(monkeypatch, MonthStatus.OPEN)
+        assert out["status"] == "NOT_CALCULATED"
+        assert out["message"] == "This month has not been published yet."
+
+    def test_a_locked_month_reads_as_no_records(self, monkeypatch):
+        from app.models.schemas import MonthStatus
+        out = self._state(monkeypatch, MonthStatus.LOCKED)
+        assert out["status"] == "NO_SALES"
+        assert out["message"] == "No records for this month."
+        assert out["month_status"] == "LOCKED"
+
+    def test_every_published_status_reports_no_sales(self, monkeypatch):
+        from app.models.schemas import MonthStatus
+        for st in (MonthStatus.UNDER_REVIEW, MonthStatus.APPROVED, MonthStatus.LOCKED):
+            assert self._state(monkeypatch, st)["status"] == "NO_SALES"
+
+    def test_the_month_status_is_always_reported(self, monkeypatch):
+        from app.models.schemas import MonthStatus
+        for st in MonthStatus:
+            assert self._state(monkeypatch, st)["month_status"] == st.value
