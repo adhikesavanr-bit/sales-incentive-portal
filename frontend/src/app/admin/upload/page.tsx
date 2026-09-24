@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { DownloadButton } from "@/components/DownloadButton";
+import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type MonthStatus, type RecalcResult, type UploadSummary } from "@/lib/api";
 import { count, monthLabel, rupeesShort } from "@/lib/format";
@@ -23,6 +24,7 @@ export default function UploadPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [recalc, setRecalc] = useState<RecalcResult | null>(null);
   const [status, setStatus] = useState<MonthStatus | null>(null);
+  const dialog = useFormDialog();
 
   async function validate() {
     if (!file) return;
@@ -55,30 +57,35 @@ export default function UploadPage() {
     }
   }
 
-  async function recalculate() {
-    const reason = window.prompt("Why are you recalculating this month?");
-    if (!reason) return;
-    setBusy("Recalculating…");
-    setError(null);
-    try {
-      setRecalc(await api.recalculate(period, reason));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Recalculation failed.");
-    } finally {
-      setBusy(null);
-    }
+  function recalculate() {
+    dialog.open({
+      title: `Recalculate ${monthLabel(period)}`,
+      submitLabel: "Recalculate",
+      fields: [{ name: "reason", label: "Why are you recalculating this month?", minLength: 3 }],
+      onSubmit: async ({ reason }) => {
+        setBusy("Recalculating…");
+        setError(null);
+        try {
+          setRecalc(await api.recalculate(period, reason));
+        } finally {
+          setBusy(null);
+        }
+      },
+    });
   }
 
-  async function changeStatus(to: MonthStatus) {
-    const reason = window.prompt(`Why are you moving ${monthLabel(period)} to ${to}?`);
-    if (!reason) return;
-    try {
-      const res = await api.setPeriodStatus(period, to, reason);
-      setStatus(res.status);
-      setNotice(`${monthLabel(period)} is now ${res.status.replace(/_/g, " ").toLowerCase()}.`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not change the month status.");
-    }
+  function changeStatus(to: MonthStatus) {
+    const label = to.replace(/_/g, " ").toLowerCase();
+    dialog.open({
+      title: `Move ${monthLabel(period)} to ${label}`,
+      submitLabel: `Move to ${label}`,
+      fields: [{ name: "reason", label: "Why?", minLength: 3 }],
+      onSubmit: async ({ reason }) => {
+        const res = await api.setPeriodStatus(period, to, reason);
+        setStatus(res.status);
+        setNotice(`${monthLabel(period)} is now ${res.status.replace(/_/g, " ").toLowerCase()}.`);
+      },
+    });
   }
 
   return (
@@ -217,6 +224,7 @@ export default function UploadPage() {
           </dl>
         )}
       </section>
+      {dialog.element}
     </AppShell>
   );
 }

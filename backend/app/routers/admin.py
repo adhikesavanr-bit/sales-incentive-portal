@@ -11,7 +11,7 @@ from app.auth.deps import current_principal, require
 from app.auth.rbac import Permission, Principal, visible_employee_sql
 from app.config import get_settings
 from app.db import bigquery as bq
-from app.models.schemas import Employee, MonthStatus
+from app.models.schemas import Employee, MonthStatus, Role
 from app.services import (
     audit,
     coupon_rules,

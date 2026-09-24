@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { useFormDialog } from "@/components/FormDialog";
 import { api, type EmployeeRow, type RoleOption } from "@/lib/api";
 
 /**
@@ -29,6 +30,11 @@ export default function PeoplePage() {
   const [canManage, setCanManage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // The reason is a field on the form, not a window.prompt: dismissing a
+  // prompt with Enter can re-click the focused button, which submitted twice.
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const dialog = useFormDialog();
 
   function load() {
     api.employees(showInactive).then(setRows).catch((e) => setError(e.message));
@@ -42,46 +48,59 @@ export default function PeoplePage() {
     api.assignableRoles().then(setRoles).catch(() => setRoles([]));
   }, []);
 
+  function startEditing(row: EmployeeRow, asNew: boolean) {
+    setEditing({ ...row });
+    setIsNew(asNew);
+    setReason("");
+    setError(null);
+    setNotice(null);
+  }
+
   async function save() {
-    if (!editing) return;
+    if (!editing || saving) return;
     if (!editing.employee_id.trim() || !editing.full_name.trim()) {
       setError("Employee ID and name are required.");
       return;
     }
-    const reason = window.prompt(
-      isNew ? "Why is this person being added?" : "Why is this changing?",
-    );
-    if (!reason) return;
+    if (reason.trim().length < 3) {
+      setError("Say briefly why — it goes in the audit log.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
     try {
       if (isNew) {
-        await api.createEmployee(editing, reason);
+        await api.createEmployee(editing, reason.trim());
         setNotice(`${editing.full_name} added. They now appear in Targets and My team.`);
       } else {
-        await api.updateEmployee(editing.employee_id, editing, reason);
+        await api.updateEmployee(editing.employee_id, editing, reason.trim());
         setNotice(`${editing.full_name} updated.`);
       }
       setEditing(null);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not save.");
+    } finally {
+      setSaving(false);
     }
   }
 
-  async function deactivate(row: EmployeeRow) {
-    const exit = window.prompt(
-      `Last working day for ${row.full_name} (YYYY-MM-DD)`,
-      new Date().toISOString().slice(0, 10),
-    );
-    if (!exit) return;
-    const reason = window.prompt("Reason");
-    if (!reason) return;
-    try {
-      await api.deactivateEmployee(row.employee_id, exit, reason);
-      setNotice(`${row.full_name} marked as left on ${exit}. Past months are unchanged.`);
-      load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not deactivate.");
-    }
+  function deactivate(row: EmployeeRow) {
+    dialog.open({
+      title: `Mark ${row.full_name} as left`,
+      description: "Their record is kept, so the months they were paid for stay intact.",
+      submitLabel: "Mark as left",
+      fields: [
+        { name: "exit", label: "Last working day", type: "date",
+          initial: new Date().toISOString().slice(0, 10) },
+        { name: "reason", label: "Reason", minLength: 3, placeholder: "Resigned" },
+      ],
+      onSubmit: async ({ exit, reason }) => {
+        await api.deactivateEmployee(row.employee_id, exit, reason);
+        setNotice(`${row.full_name} marked as left on ${exit}. Past months are unchanged.`);
+        load();
+      },
+    });
   }
 
   const filtered = rows.filter((r) =>
@@ -111,7 +130,7 @@ export default function PeoplePage() {
             Show leavers
           </label>
           {canManage && (
-            <button onClick={() => { setEditing({ ...BLANK }); setIsNew(true); }}
+            <button onClick={() => startEditing(BLANK, true)}
                     className="btn-primary">
               Add person
             </button>
@@ -185,9 +204,17 @@ export default function PeoplePage() {
                      className="inp" placeholder="NHP212" />
             </Field>
           </div>
+          <div className="mt-4 max-w-xl">
+            <Field label="Reason" hint="Recorded in the audit log with the change">
+              <input value={reason} onChange={(e) => setReason(e.target.value)}
+                     onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+                     className="inp"
+                     placeholder={isNew ? "New joiner, R1" : "Promoted to RM"} />
+            </Field>
+          </div>
           <div className="mt-5 flex gap-3">
-            <button onClick={save} className="btn-primary">
-              {isNew ? "Add person" : "Save changes"}
+            <button onClick={save} disabled={saving} className="btn-primary disabled:opacity-60">
+              {saving ? "Saving…" : isNew ? "Add person" : "Save changes"}
             </button>
             <button onClick={() => setEditing(null)} className="btn-quiet">Cancel</button>
           </div>
@@ -225,7 +252,7 @@ export default function PeoplePage() {
                 <td className="p-3 text-right whitespace-nowrap">
                   {canManage && (
                     <>
-                      <button onClick={() => { setEditing({ ...r }); setIsNew(false); }}
+                      <button onClick={() => startEditing(r, false)}
                               className="text-sm underline">Edit</button>
                       {r.is_active && (
                         <button onClick={() => deactivate(r)}
@@ -246,6 +273,8 @@ export default function PeoplePage() {
           </tbody>
         </table>
       </section>
+
+      {dialog.element}
 
       <p className="mt-6 text-sm text-ink-muted">
         People who leave are marked with an exit date rather than removed, so

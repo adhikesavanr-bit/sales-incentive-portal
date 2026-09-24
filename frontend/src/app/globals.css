@@ -27,6 +27,12 @@
   }
   .btn-primary { @apply btn bg-teal text-white hover:bg-teal-deep; }
   .btn-quiet { @apply btn border border-rule bg-surface hover:bg-canvas; }
+  /* Form inputs. Used by the People form and the dialogs; it was referenced
+     but never defined, so inputs rendered unstyled beside their labels. */
+  .inp {
+    @apply mt-1 block w-full rounded-card border border-rule bg-surface px-3 py-2
+           text-sm text-ink placeholder:text-ink-faint;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -532,3 +532,24 @@ class TestClientErrorReports:
         from app.routers.client_errors import ClientError
         with pytest.raises(ValidationError):
             ClientError(message="x" * 1001)
+
+
+class TestAssignableRoles:
+    """Nobody can hand out a role more powerful than their own."""
+
+    @staticmethod
+    def _values(role):
+        from app.routers.admin import assignable_roles
+        return {r["value"] for r in assignable_roles(principal=principal(role))}
+
+    def test_super_admin_can_assign_every_role(self):
+        assert self._values(Role.SUPER_ADMIN) == {r.value for r in Role}
+
+    def test_finance_admin_cannot_create_a_super_admin(self):
+        v = self._values(Role.FINANCE_ADMIN)
+        assert "BUSINESS_HEAD" in v and "FINANCE_ADMIN" in v
+        assert "SUPER_ADMIN" not in v
+
+    def test_team_admin_cannot_hand_out_company_wide_roles(self):
+        v = self._values(Role.TEAM_ADMIN)
+        assert not v & {"BUSINESS_HEAD", "FINANCE_ADMIN", "SUPER_ADMIN"}

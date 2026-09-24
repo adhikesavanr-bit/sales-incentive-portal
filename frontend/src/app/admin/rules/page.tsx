@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type CouponRule, type SlabRow } from "@/lib/api";
 import { count, monthLabel, percent } from "@/lib/format";
@@ -43,6 +44,7 @@ export default function RulesPage() {
   const [editable, setEditable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const dialog = useFormDialog();
 
   function load() {
     setError(null);
@@ -53,67 +55,61 @@ export default function RulesPage() {
   }
   useEffect(load, [period]);
 
-  async function editCoupon(rule: CouponRule) {
-    const minSales = window.prompt(
-      `${rule.group_size}: clubbed sales needed to qualify`,
-      String(rule.min_sales),
-    );
-    if (minSales === null) return;
-    const minOwn = window.prompt(
-      `${rule.group_size}: sales the coupon must make on its own`,
-      String(rule.min_own_sales),
-    );
-    if (minOwn === null) return;
-    const from = window.prompt(
-      "Effective from (YYYY-MM-DD). Months already approved or locked cannot be changed.",
-      firstOfNextMonth(),
-    );
-    if (!from) return;
-    const reason = window.prompt("Why is this changing?");
-    if (!reason) return;
-
-    try {
-      await api.updateCouponRule({
-        group_size: rule.group_size,
-        required_sales: rule.required_sales,
-        min_sales: Number(minSales),
-        min_own_sales: Number(minOwn),
-        effective_from: from,
-        reason,
-      });
-      setNotice(`${rule.group_size} updated, effective ${from}.`);
-      load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The rule could not be saved.");
-    }
+  function editCoupon(rule: CouponRule) {
+    dialog.open({
+      title: `${rule.group_size} coupon rule`,
+      description: `Coupon size ${rule.required_sales}.`,
+      submitLabel: "Save rule",
+      fields: [
+        { name: "minSales", label: "Clubbed sales needed to qualify", type: "number",
+          initial: String(rule.min_sales) },
+        { name: "minOwn", label: "Sales the coupon must make on its own", type: "number",
+          initial: String(rule.min_own_sales) },
+        { name: "from", label: "Effective from", type: "date", initial: firstOfNextMonth(),
+          hint: "Months already approved or locked cannot be changed." },
+        { name: "reason", label: "Why is this changing?", minLength: 3 },
+      ],
+      onSubmit: async ({ minSales, minOwn, from, reason }) => {
+        await api.updateCouponRule({
+          group_size: rule.group_size,
+          required_sales: rule.required_sales,
+          min_sales: Number(minSales),
+          min_own_sales: Number(minOwn),
+          effective_from: from,
+          reason,
+        });
+        setNotice(`${rule.group_size} updated, effective ${from}.`);
+        load();
+      },
+    });
   }
 
-  async function editSlab(scope: string, slab: SlabRow) {
-    const rate = window.prompt(
-      `Rate at ${percent(slab.threshold, 0)} and above, as a percentage`,
-      String((slab.rate * 100).toFixed(3)),
-    );
-    if (rate === null) return;
-    const from = window.prompt(
-      "Effective from (YYYY-MM-DD)", firstOfNextMonth(),
-    );
-    if (!from) return;
-    const reason = window.prompt("Why is this changing?");
-    if (!reason) return;
-
-    try {
-      await api.updateSlab({
-        scope,
-        threshold: slab.threshold,
-        rate: Number(rate) / 100,
-        effective_from: from,
-        reason,
-      });
-      setNotice(`${SCOPE_LABELS[scope] ?? scope} updated, effective ${from}.`);
-      load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The slab could not be saved.");
-    }
+  function editSlab(scope: string, slab: SlabRow) {
+    dialog.open({
+      title: SCOPE_LABELS[scope] ?? scope,
+      description: `Rate at ${
+        scope === "FIRST_YEAR_MBBS_UNITS" ? `${slab.threshold} units` : percent(slab.threshold, 0)
+      } and above.`,
+      submitLabel: "Save rate",
+      fields: [
+        { name: "rate", label: "Rate, as a percentage", type: "number",
+          initial: String(Number((slab.rate * 100).toFixed(3))) },
+        { name: "from", label: "Effective from", type: "date", initial: firstOfNextMonth(),
+          hint: "Months already approved or locked cannot be changed." },
+        { name: "reason", label: "Why is this changing?", minLength: 3 },
+      ],
+      onSubmit: async ({ rate, from, reason }) => {
+        await api.updateSlab({
+          scope,
+          threshold: slab.threshold,
+          rate: Number(rate) / 100,
+          effective_from: from,
+          reason,
+        });
+        setNotice(`${SCOPE_LABELS[scope] ?? scope} updated, effective ${from}.`);
+        load();
+      },
+    });
   }
 
   return (
@@ -246,6 +242,7 @@ export default function RulesPage() {
         the rules they were calculated under; an edit dated inside one is
         refused.
       </p>
+      {dialog.element}
     </AppShell>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type TargetRow } from "@/lib/api";
 import { count, monthLabel, rupeesShort } from "@/lib/format";
@@ -20,32 +21,36 @@ export default function TargetsPage() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const dialog = useFormDialog();
 
   function load() {
     api.targets(period).then(setRows).catch((e) => setError(e.message));
   }
   useEffect(load, [period]);
 
-  async function save(row: TargetRow) {
+  function save(row: TargetRow) {
     const units = Number(draft);
-    if (!Number.isFinite(units) || units < 0) {
+    if (draft.trim() === "" || !Number.isFinite(units) || units < 0) {
       setError("Enter a target as a whole number of units.");
       return;
     }
-    const reason = window.prompt(`Why is ${row.full_name}'s target changing?`);
-    if (!reason) return;
-    try {
-      await api.saveTarget({
-        employee_id: row.employee_id,
-        period,
-        target_units: units,
-        reason,
-      });
-      setEditing(null);
-      load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The target could not be saved.");
-    }
+    setError(null);
+    dialog.open({
+      title: `${row.full_name ?? row.employee_id}: ${units} units`,
+      description: `Target for ${monthLabel(period)}.`,
+      submitLabel: "Save target",
+      fields: [{ name: "reason", label: "Why is this changing?", minLength: 3 }],
+      onSubmit: async ({ reason }) => {
+        await api.saveTarget({
+          employee_id: row.employee_id,
+          period,
+          target_units: units,
+          reason,
+        });
+        setEditing(null);
+        load();
+      },
+    });
   }
 
   return (
@@ -152,6 +157,7 @@ export default function TargetsPage() {
           </tbody>
         </table>
       </section>
+      {dialog.element}
     </AppShell>
   );
 }
