@@ -1,12 +1,18 @@
 """Sign-in. Exchanges a Google ID token for a short-lived app session token."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 
-from app.auth.deps import current_principal, issue_app_token, verify_google_token
+from app.auth.deps import (
+    current_principal,
+    issue_app_token,
+    issue_impersonation_token,
+    verify_google_token,
+)
 from app.auth.rbac import Principal
 from app.config import get_settings
+from app.models.schemas import Role
 from app.services import audit, employees as employee_service
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -105,6 +111,8 @@ class MeResponse(BaseModel):
     zone: str | None
     vertical: str | None
     permissions: list[str]
+    # The super admin viewing as this person, when that is what is happening.
+    impersonated_by: str | None = None
 
 
 @router.get("/me", response_model=MeResponse)
@@ -118,4 +126,71 @@ def me(principal: Principal = Depends(current_principal)) -> MeResponse:
         zone=principal.zone,
         vertical=principal.vertical,
         permissions=sorted(p.value for p in principal.permissions),
+        impersonated_by=principal.impersonator,
     )
+
+
+# --- view as ----------------------------------------------------------------
+
+class ViewAsRequest(BaseModel):
+    employee_id: str
+
+
+class ViewAsResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    employee_id: str
+    full_name: str
+    role: str
+
+
+def _require_super_admin(principal: Principal) -> None:
+    if principal.impersonator or principal.role is not Role.SUPER_ADMIN:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Only super admins can view as someone."
+        )
+
+
+@router.post("/view-as", response_model=ViewAsResponse)
+def start_view_as(
+    body: ViewAsRequest,
+    request: Request,
+    principal: Principal = Depends(current_principal),
+) -> ViewAsResponse:
+    """See the app exactly as another employee does. Read-only, 30 minutes."""
+    _require_super_admin(principal)
+    target = employee_service.get_by_id(body.employee_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No active employee with that ID.")
+    if target.employee_id == principal.employee_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "That is your own account.")
+
+    token, ttl = issue_impersonation_token(principal.email, target.employee_id)
+    role = target.role.value if isinstance(target.role, Role) else str(target.role)
+    audit.record(
+        principal.email, "VIEW_AS_START", entity_type="employee",
+        affected_record=target.employee_id,
+        new_value={"full_name": target.full_name, "role": role, "minutes": ttl // 60},
+        reason="Read-only view of the app as this employee",
+        ip_address=request.client.host if request.client else None,
+    )
+    return ViewAsResponse(
+        access_token=token, expires_in=ttl, employee_id=target.employee_id,
+        full_name=target.full_name, role=role,
+    )
+
+
+@router.post("/view-as/end", status_code=status.HTTP_204_NO_CONTENT,
+             response_class=Response)
+def end_view_as(
+    body: ViewAsRequest,
+    principal: Principal = Depends(current_principal),
+) -> Response:
+    """Record the end of a view-as session. Called with the admin's own token."""
+    _require_super_admin(principal)
+    audit.record(
+        principal.email, "VIEW_AS_END", entity_type="employee",
+        affected_record=body.employee_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

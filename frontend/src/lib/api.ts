@@ -25,6 +25,68 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   window.sessionStorage.removeItem(TOKEN_KEY);
+  window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  window.sessionStorage.removeItem(VIEW_AS_KEY);
+}
+
+// --- view as ----------------------------------------------------------------
+// While a super admin views the app as someone, the view-as token is the
+// session token and the admin's own token waits here until they exit.
+const ADMIN_TOKEN_KEY = "incentive_portal_admin_token";
+const VIEW_AS_KEY = "incentive_portal_view_as";
+
+export function isViewingAs(): boolean {
+  return typeof window !== "undefined" && !!window.sessionStorage.getItem(ADMIN_TOKEN_KEY);
+}
+
+/** Back to the admin's own session. Returns false if there was none to restore. */
+function restoreAdminSession(): boolean {
+  const admin = window.sessionStorage.getItem(ADMIN_TOKEN_KEY);
+  if (!admin) return false;
+  window.sessionStorage.setItem(TOKEN_KEY, admin);
+  window.sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+  window.sessionStorage.removeItem(VIEW_AS_KEY);
+  return true;
+}
+
+/**
+ * A 401 normally means sign in again. During view-as it means the view-as
+ * session ended (30 minutes, or access changed): return to the admin's own
+ * session instead of signing them out.
+ */
+function onUnauthorized(): never {
+  if (restoreAdminSession()) {
+    window.location.href = "/admin/employees?view_as=ended";
+    throw new ApiError(401, "View-as ended. You are back in your own account.");
+  }
+  clearToken();
+  window.location.href = "/login";
+  throw new ApiError(401, "Your session expired. Sign in again.");
+}
+
+export async function startViewAs(employeeId: string): Promise<void> {
+  const res = await request<{ access_token: string; employee_id: string }>(
+    "/api/auth/view-as",
+    { method: "POST", body: JSON.stringify({ employee_id: employeeId }) },
+  );
+  const own = getToken();
+  if (own) window.sessionStorage.setItem(ADMIN_TOKEN_KEY, own);
+  window.sessionStorage.setItem(VIEW_AS_KEY, res.employee_id);
+  setToken(res.access_token);
+  window.location.href = "/dashboard";
+}
+
+export async function endViewAs(): Promise<void> {
+  const viewed = window.sessionStorage.getItem(VIEW_AS_KEY);
+  if (!restoreAdminSession()) return;
+  // Best effort: the audit entry for the end. Exiting never waits on it.
+  if (viewed) {
+    request("/api/auth/view-as/end", {
+      method: "POST",
+      body: JSON.stringify({ employee_id: viewed }),
+    }).catch(() => {});
+  }
+  window.location.href = "/admin/employees";
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -39,8 +101,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (res.status === 401) {
-    clearToken();
-    if (typeof window !== "undefined") window.location.href = "/login";
+    if (typeof window !== "undefined") onUnauthorized();
     throw new ApiError(401, "Your session expired. Sign in again.");
   }
   if (!res.ok) {
@@ -65,11 +126,7 @@ async function download(path: string, fallbackName: string): Promise<void> {
   const res = await fetch(`${BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (res.status === 401) {
-    clearToken();
-    window.location.href = "/login";
-    throw new ApiError(401, "Your session expired. Sign in again.");
-  }
+  if (res.status === 401) onUnauthorized();
   if (!res.ok) {
     let detail = `Download failed (${res.status}).`;
     try {
@@ -257,6 +314,8 @@ export interface Me {
   zone: string | null;
   vertical: string | null;
   permissions: string[];
+  /** Set when a super admin is viewing the app as this person. */
+  impersonated_by?: string | null;
 }
 
 export interface Breakdown {

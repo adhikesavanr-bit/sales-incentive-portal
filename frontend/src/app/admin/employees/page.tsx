@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { useFormDialog } from "@/components/FormDialog";
-import { api, type EmployeeRow, type RoleOption } from "@/lib/api";
+import { api, startViewAs, type EmployeeRow, type RoleOption } from "@/lib/api";
 
 /**
  * The people master. Everything downstream keys off this list: targets, team
@@ -28,6 +28,8 @@ export default function PeoplePage() {
   const [editing, setEditing] = useState<EmployeeRow | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [canManage, setCanManage] = useState(false);
+  // View-as is for super admins only; the API enforces it, this just hides it.
+  const [me, setMe] = useState<{ id: string; superAdmin: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // The reason is a field on the form, not a window.prompt: dismissing a
@@ -43,8 +45,14 @@ export default function PeoplePage() {
 
   useEffect(() => {
     api.me()
-      .then((me) => setCanManage(me.permissions.includes("MANAGE_EMPLOYEES")))
+      .then((m) => {
+        setCanManage(m.permissions.includes("MANAGE_EMPLOYEES"));
+        setMe({ id: m.employee_id, superAdmin: m.role === "SUPER_ADMIN" && !m.impersonated_by });
+      })
       .catch(() => setCanManage(false));
+    if (new URLSearchParams(window.location.search).get("view_as") === "ended") {
+      setNotice("View-as ended after 30 minutes. You are back in your own account.");
+    }
     api.assignableRoles().then(setRoles).catch(() => setRoles([]));
   }, []);
 
@@ -82,6 +90,15 @@ export default function PeoplePage() {
       setError(e instanceof Error ? e.message : "Could not save.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function viewAs(row: EmployeeRow) {
+    setError(null);
+    try {
+      await startViewAs(row.employee_id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start view-as.");
     }
   }
 
@@ -254,6 +271,13 @@ export default function PeoplePage() {
                     <>
                       <button onClick={() => startEditing(r, false)}
                               className="text-sm underline">Edit</button>
+                      {me?.superAdmin && r.is_active && r.employee_id !== me.id && (
+                        <button onClick={() => viewAs(r)}
+                                title="See the app exactly as this person does. Read-only, 30 minutes."
+                                className="ml-3 text-sm underline">
+                          View as
+                        </button>
+                      )}
                       {r.is_active && (
                         <button onClick={() => deactivate(r)}
                                 className="ml-3 text-sm text-ink-muted underline">

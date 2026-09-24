@@ -37,5 +37,5 @@ def report_client_error(
     body: ClientError,
     principal: Principal = Depends(current_principal),
 ) -> Response:
-    log.warning("CLIENT_ERROR %s", json.dumps({"user": principal.email, **body.model_dump()}))
+    log.warning("CLIENT_ERROR %s", json.dumps({"user": principal.email, "viewing_as_by": principal.impersonator, **body.model_dump()}))
     return Response(status_code=status.HTTP_204_NO_CONTENT)

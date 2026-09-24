@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { api, clearToken, getToken, type Me } from "@/lib/api";
+import { api, clearToken, endViewAs, getToken, type Me } from "@/lib/api";
 
 const NAV = [
   { href: "/dashboard", label: "My performance", needs: null },
@@ -43,7 +43,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.replace("/login");
   }
 
+  const viewingAs = !!me.impersonated_by;
+
   return (
+    <>
+    {viewingAs && (
+      <div
+        role="status"
+        className="sticky top-0 z-40 flex flex-wrap items-center justify-center gap-x-3 gap-y-1
+                   bg-amber-500 px-4 py-2 text-sm font-medium text-ink"
+      >
+        <span>
+          Viewing as {me.full_name} ({me.role.replace(/_/g, " ").toLowerCase()}
+          {me.region ? ` · ${me.region}` : ""}) — read-only
+        </span>
+        <button onClick={() => endViewAs()} className="rounded-card bg-ink px-3 py-1 text-white">
+          Exit view-as
+        </button>
+      </div>
+    )}
     <div className="min-h-screen lg:flex">
       <aside className="border-b border-rule bg-surface lg:h-screen lg:w-60 lg:shrink-0 lg:border-b-0 lg:border-r">
         <div className="flex items-center justify-between px-5 py-4 lg:block">
@@ -78,9 +96,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {me.role.replace(/_/g, " ").toLowerCase()}
             {me.region ? ` · ${me.region}` : ""}
           </div>
-          <button onClick={signOut} className="mt-3 text-micro text-ink-muted underline">
-            Sign out
-          </button>
+          {viewingAs ? (
+            <button onClick={() => endViewAs()} className="mt-3 text-micro text-ink-muted underline">
+              Exit view-as
+            </button>
+          ) : (
+            <button onClick={signOut} className="mt-3 text-micro text-ink-muted underline">
+              Sign out
+            </button>
+          )}
         </div>
       </aside>
 
@@ -88,5 +112,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </main>
     </div>
+    </>
   );
 }

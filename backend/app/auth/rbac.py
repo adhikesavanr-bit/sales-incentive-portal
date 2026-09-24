@@ -86,6 +86,9 @@ class Principal:
     zone: str | None = None
     vertical: str | None = None
     permissions: set[Permission] = field(default_factory=set)
+    # Set when a super admin is viewing the app as this person: the email of
+    # the admin actually at the keyboard. Such a principal is read-only.
+    impersonator: str | None = None
 
     def can(self, permission: Permission) -> bool:
         return permission in self.permissions
