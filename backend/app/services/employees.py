@@ -1,7 +1,7 @@
 """Employee master and reporting hierarchy."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from app.config import get_settings
 from app.db import bigquery as bq
@@ -24,6 +24,7 @@ def _row_to_employee(r: dict) -> Employee:
         zm_id=r.get("zm_id"),
         business_head_id=r.get("business_head_id"),
         is_active=bool(r.get("is_active", True)),
+        exit_date=r.get("exit_date"),
     )
 
 
@@ -45,6 +46,21 @@ def get_by_id(employee_id: str) -> Employee | None:
         {"id": employee_id},
     )
     return _row_to_employee(rows[0]) if rows else None
+
+
+def deactivate(employee_id: str, exit_date: date, updated_by: str) -> Employee:
+    """Mark someone as left. The row stays; only `is_active` and `exit_date` change.
+
+    Deleting would orphan their past sales and break every month they appear
+    in, so leavers are closed rather than removed.
+    """
+    existing = get_by_id(employee_id)
+    if existing is None:
+        raise ValueError(f"No employee {employee_id}")
+    existing.is_active = False
+    existing.exit_date = exit_date
+    upsert(existing, updated_by)
+    return existing
 
 
 def list_all(active_only: bool = True) -> list[Employee]:
@@ -96,6 +112,7 @@ def upsert(employee: Employee, updated_by: str) -> None:
         "zone": employee.zone,
         "vertical": employee.vertical,
         "is_active": employee.is_active,
+        "exit_date": employee.exit_date.isoformat() if employee.exit_date else None,
         "effective_from": now.date().isoformat(),
         "effective_to": None,
         "updated_at": now.isoformat(),

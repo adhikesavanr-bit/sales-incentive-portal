@@ -39,6 +39,15 @@ _SUB = _BDE | {Permission.VIEW_TEAM}
 _RM = _SUB | {Permission.VIEW_REGION, Permission.PROPOSE_TARGETS}
 _ZM = _RM | {Permission.VIEW_ZONE}
 _BH = _ZM | {Permission.VIEW_BUSINESS, Permission.APPROVE_TARGETS}
+# Manages people and targets within their own subtree. Deliberately NOT given
+# VIEW_BUSINESS: a team lead who can edit their team's targets should not
+# thereby see every other manager's payroll.
+_TEAM_ADMIN = _RM | {
+    Permission.MANAGE_EMPLOYEES,
+    Permission.MANAGE_HIERARCHY,
+    Permission.APPROVE_TARGETS,
+}
+
 _FIN = _BH | {
     Permission.UPLOAD_SALES,
     Permission.MANAGE_EMPLOYEES,
@@ -51,6 +60,7 @@ _FIN = _BH | {
 
 ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     Role.BDE: _BDE,
+    Role.TEAM_ADMIN: _TEAM_ADMIN,
     Role.SUB_MANAGER: _SUB,
     Role.REGIONAL_MANAGER: _RM,
     Role.ZONAL_MANAGER: _ZM,

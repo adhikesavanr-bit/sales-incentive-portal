@@ -11,6 +11,7 @@ const NAV = [
   { href: "/team", label: "My team", needs: "VIEW_TEAM" },
   { href: "/admin/upload", label: "Sales upload", needs: "UPLOAD_SALES" },
   { href: "/admin/targets", label: "Targets", needs: "VIEW_TARGETS" },
+  { href: "/admin/rules", label: "Rules", needs: "VIEW_TARGETS" },
   { href: "/admin/employees", label: "People", needs: "MANAGE_EMPLOYEES" },
 ];
 

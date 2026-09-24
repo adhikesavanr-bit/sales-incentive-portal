@@ -24,12 +24,15 @@ from app.models.schemas import (
     TransactionQualification,
 )
 
-# The `Slab` sheet of the automated workbook, read by
+# Seed values from the `Slab` sheet of the automated workbook, read by
 #     M = INDEX(Slab!B:B, MATCH(GroupSize, Slab!A:A, 0))
 #
 # A table, not ceil(0.8 * required): the 80% rule holds for G10 and up, but G5
-# and G3 need full utilisation and G7 needs 5 of 7. Group size itself is
-# REGEXEXTRACT(DiscountGroup, "G\d+").
+# and G3 need full utilisation and G7 needs 5 of 7.
+#
+# These are DEFAULTS ONLY. At runtime the rules come from the `coupon_rules`
+# table, effective-dated, so Finance can change a threshold without a code
+# change and without disturbing a month that has already been paid.
 MIN_SALES_BY_GROUP_SIZE: dict[str, int] = {
     "G3": 3,
     "G5": 5,
@@ -40,8 +43,6 @@ MIN_SALES_BY_GROUP_SIZE: dict[str, int] = {
     "G25": 20,
 }
 
-# Same sheet, column C. Held here so a coupon master that omits the column can
-# still be validated.
 REQUIRED_SALES_BY_GROUP_SIZE: dict[str, int] = {
     "G3": 3, "G5": 5, "G7": 7, "G10": 10, "G15": 15, "G20": 20, "G25": 25,
 }
@@ -72,6 +73,35 @@ def min_own_sales_for(group_size: str) -> int:
     return MIN_OWN_SALES_BY_GROUP_SIZE.get(
         (group_size or "").upper(), DEFAULT_MIN_OWN_SALES
     )
+
+
+@dataclass
+class CouponPolicy:
+    """The qualification thresholds in force for one period.
+
+    Built from the `coupon_rules` table for the period being calculated, so a
+    rule change today cannot alter what August was paid. Falls back to the
+    seed values above when no rows exist, which is what a fresh install has.
+    """
+
+    min_sales: dict[str, int] = field(
+        default_factory=lambda: dict(MIN_SALES_BY_GROUP_SIZE)
+    )
+    min_own_sales: dict[str, int] = field(
+        default_factory=lambda: dict(MIN_OWN_SALES_BY_GROUP_SIZE)
+    )
+    default_min_own_sales: int = DEFAULT_MIN_OWN_SALES
+
+    def min_sales_for(self, group_size: str, required_sales: int) -> int:
+        size = (group_size or "").upper()
+        if size in self.min_sales:
+            return self.min_sales[size]
+        return max(1, -(-required_sales * 8 // 10))  # ceil(0.8 * required)
+
+    def min_own_sales_for(self, group_size: str) -> int:
+        return self.min_own_sales.get(
+            (group_size or "").upper(), self.default_min_own_sales
+        )
 
 
 @dataclass
@@ -164,6 +194,7 @@ def run_qualification(
     clubbing_overrides: list[ClubbingOverride] | None = None,
     seen_payment_ids: set[str] | None = None,
     non_field_regions: set[str] | None = None,
+    policy: CouponPolicy | None = None,
 ) -> QualificationResult:
     """Run the full qualification pass.
 
@@ -177,7 +208,10 @@ def run_qualification(
             transactions are qualified and returned as normal, flagged
             `is_field=False`, so the coupon audit keeps them and the incentive
             calculation skips them.
+        policy: the thresholds in force for this period. Defaults to the seed
+            values, which are what the approved August 2026 workbook used.
     """
+    rules = policy or CouponPolicy()
     non_field = {r.lower() for r in (non_field_regions or set())}
     q_over = {o.coupon_signature: o for o in (qualification_overrides or [])}
     seen = seen_payment_ids or set()
@@ -236,7 +270,9 @@ def run_qualification(
     result = QualificationResult()
     for sig_id, sig in by_signature.items():
         total = len(assigned.get(sig_id, []))
-        min_sales = sig.min_sales or min_sales_for(sig.group_size, sig.required_sales)
+        # The coupon master carries a min_sales per signature, but the policy
+        # in force for the period wins: it is the auditable, versioned source.
+        min_sales = rules.min_sales_for(sig.group_size, sig.required_sales)
 
         # `Club Sales` counts every signature in the group, foundation ones
         # included; `Club Sales FC` counts only the foundation ones.
@@ -250,7 +286,7 @@ def run_qualification(
         # Q3: =IF(AND(Q2="Yes", Total<floor, ClubFC=0), "No", Q2)
         #     A coupon that leant on the club must still have sold enough
         #     itself, unless the group includes foundation sales.
-        own_floor = min_own_sales_for(sig.group_size)
+        own_floor = rules.min_own_sales_for(sig.group_size)
         own_ok = total >= own_floor or club_fc > 0
         q3 = q2 and own_ok
 

@@ -331,3 +331,98 @@ class TestPublicConfig:
         assert auth_router.public_config().allowed_email_domains == [
             "marrowmed.com", "dailyrounds.org",
         ]
+
+
+class TestCouponRuleGuards:
+    """Editing a threshold must not reach back into a month already paid."""
+
+    def test_only_rule_managers_may_edit(self):
+        from app.auth.rbac import Permission, has_permission
+        from app.models.schemas import Role
+        for role in (Role.BDE, Role.SUB_MANAGER, Role.REGIONAL_MANAGER,
+                     Role.ZONAL_MANAGER, Role.BUSINESS_HEAD):
+            assert not has_permission(role, Permission.MANAGE_RULES)
+        assert has_permission(Role.FINANCE_ADMIN, Permission.MANAGE_RULES)
+        assert has_permission(Role.SUPER_ADMIN, Permission.MANAGE_RULES)
+
+    def test_seed_rules_match_the_approved_workbook(self):
+        from app.services.coupon_rules import seed_rules
+        by_size = {r.group_size: r for r in seed_rules()}
+        assert by_size["G10"].min_sales == 8
+        assert by_size["G10"].min_own_sales == 5
+        assert by_size["G5"].min_sales == 5
+        assert by_size["G3"].min_sales == 3
+        assert by_size["G3"].min_own_sales == 3
+
+    def test_utilisation_is_reported_for_the_screen(self):
+        from app.services.coupon_rules import seed_rules
+        by_size = {r.group_size: r for r in seed_rules()}
+        assert by_size["G10"].utilisation_pct == 0.8
+        assert by_size["G5"].utilisation_pct == 1.0
+
+    def test_period_start_is_the_first_of_the_month(self):
+        from datetime import date
+        from app.services.coupon_rules import period_start
+        assert period_start("2026-08") == date(2026, 8, 1)
+
+    def test_an_empty_table_falls_back_to_the_seed(self, monkeypatch):
+        """A fresh install must calculate identically to the workbook."""
+        from app.services import coupon_rules
+        monkeypatch.setattr(coupon_rules.bq, "query", lambda *a, **k: [])
+        policy = coupon_rules.policy_for_period("2026-08")
+        assert policy.min_sales_for("G10", 10) == 8
+        assert policy.min_own_sales_for("G3") == 3
+
+    def test_the_policy_is_read_for_the_period_being_calculated(self, monkeypatch):
+        """August reads August's rules, not today's."""
+        from app.services import coupon_rules
+        asked = {}
+        monkeypatch.setattr(
+            coupon_rules.bq, "query",
+            lambda sql, params=None: asked.update(params or {}) or [],
+        )
+        coupon_rules.policy_for_period("2026-08")
+        assert asked["start"] == "2026-08-01"
+
+
+class TestTeamAdminRole:
+    """A team admin maintains their own people without seeing company pay."""
+
+    def test_it_can_manage_people_and_targets(self):
+        from app.auth.rbac import Permission, has_permission
+        from app.models.schemas import Role
+        for p in (Permission.MANAGE_EMPLOYEES, Permission.MANAGE_HIERARCHY,
+                  Permission.PROPOSE_TARGETS, Permission.APPROVE_TARGETS):
+            assert has_permission(Role.TEAM_ADMIN, p)
+
+    def test_it_cannot_see_company_wide_data(self):
+        """The whole point of the role: no VIEW_BUSINESS."""
+        from app.auth.rbac import Permission, has_permission
+        from app.models.schemas import Role
+        assert not has_permission(Role.TEAM_ADMIN, Permission.VIEW_BUSINESS)
+
+    def test_its_scope_is_its_own_region(self):
+        from app.auth.rbac import ROLE_PERMISSIONS, Principal, visible_employee_sql
+        from app.models.schemas import Role
+        sql, params = visible_employee_sql(Principal(
+            email="lead@marrowmed.com", employee_id="NHP300", full_name="Lead",
+            role=Role.TEAM_ADMIN, permissions=set(ROLE_PERMISSIONS[Role.TEAM_ADMIN]),
+        ))
+        assert "h.rm_id = @scope_id" in sql
+        assert sql != "TRUE"
+
+    def test_it_cannot_upload_sales_or_lock_a_month(self):
+        from app.auth.rbac import Permission, has_permission
+        from app.models.schemas import Role
+        for p in (Permission.UPLOAD_SALES, Permission.RECALCULATE,
+                  Permission.LOCK_MONTH, Permission.MANAGE_RULES):
+            assert not has_permission(Role.TEAM_ADMIN, p)
+
+    def test_a_leaver_is_closed_not_deleted(self):
+        """Their past months still need an owner for every sale."""
+        from datetime import date
+        from app.models.schemas import Employee
+        e = Employee(employee_id="NHP001", full_name="A", is_active=True)
+        e.is_active, e.exit_date = False, date(2026, 10, 15)
+        assert e.employee_id == "NHP001"
+        assert e.exit_date == date(2026, 10, 15)

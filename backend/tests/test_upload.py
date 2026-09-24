@@ -236,7 +236,7 @@ class TestSqlStatementSplitting:
         sql = (pathlib.Path(__file__).resolve().parents[1] / "app/db/schema.sql").read_text()
         sql = sql.replace("${PROJECT}", "p").replace("${DATASET}", "d").replace("${LOCATION}", "US")
         stmts = split_statements(sql)
-        assert len(stmts) == 19
+        assert len(stmts) == 20
         for s in stmts:
             assert s.count("(") == s.count(")"), s.splitlines()[0]
 
@@ -251,9 +251,9 @@ class TestSqlStatementSplitting:
             if m:
                 created.add(m.group(1))
         assert {"raw_sales", "coupon_master", "employee_master", "reporting_hierarchy",
-                "targets", "incentive_rules", "monthly_incentive", "month_status",
-                "source_table_config", "audit_log", "v_employee_hierarchy",
-                "v_incentive_current"} <= created
+                "targets", "incentive_rules", "coupon_rules", "monthly_incentive",
+                "month_status", "source_table_config", "audit_log",
+                "v_employee_hierarchy", "v_incentive_current"} <= created
 
     def test_trailing_statement_without_a_semicolon_is_kept(self):
         from app.db.ddl import split_statements

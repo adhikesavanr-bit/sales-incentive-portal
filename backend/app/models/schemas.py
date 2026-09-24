@@ -21,6 +21,9 @@ class Role(str, Enum):
     REGIONAL_MANAGER = "REGIONAL_MANAGER"
     SUB_MANAGER = "SUB_MANAGER"  # workbook designation "SBM" / TM / Sr.BDE
     BDE = "BDE"
+    # Maintains people and targets inside their own hierarchy, without the
+    # company-wide visibility or the month controls that Finance has.
+    TEAM_ADMIN = "TEAM_ADMIN"
 
 
 class QualificationStatus(str, Enum):
@@ -76,6 +79,7 @@ class Employee(BaseModel):
     zm_id: str | None = None
     business_head_id: str | None = None
     is_active: bool = True
+    exit_date: date | None = None
     effective_from: date | None = None
     effective_to: date | None = None
 
@@ -146,6 +150,23 @@ class SalesTransaction(BaseModel):
     coupon: str | None = None
     coupon_agent: str | None = None
     state: str | None = None
+
+
+class CouponRule(BaseModel):
+    """One group size's thresholds, as in force for a period."""
+
+    group_size: str
+    required_sales: int
+    min_sales: int
+    min_own_sales: int
+    effective_from: date | None = None
+    effective_to: date | None = None
+    reason: str | None = None
+    updated_by: str | None = None
+
+    @property
+    def utilisation_pct(self) -> float:
+        return (self.min_sales / self.required_sales) if self.required_sales else 0.0
 
 
 class Target(BaseModel):

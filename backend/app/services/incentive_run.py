@@ -21,7 +21,7 @@ from app.models.schemas import (
     SlabScope,
     Target,
 )
-from app.services import coupons as coupon_service
+from app.services import coupon_rules, coupons as coupon_service
 from app.services import employees as employee_service
 from app.services import source_tables
 
@@ -176,6 +176,9 @@ def run(period: str, calculated_by: str) -> dict[str, IncentiveBreakdown]:
         qualification_overrides=q_over,
         clubbing_overrides=c_over,
         non_field_regions=s.non_field_regions,
+        # The rules as they stood at the start of this period, not as they
+        # stand today. Recalculating August next year gives August's answer.
+        policy=coupon_rules.policy_for_period(period),
     )
 
     employees = {e.employee_id: e for e in employee_service.list_all(active_only=False)}

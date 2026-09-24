@@ -290,3 +290,60 @@ class TestNonFieldRegions:
         s.region = "Inside Sales"
         res = run_qualification(sales("RKR03MMA", 8), [s])
         assert all(t.is_field for t in res.transactions)
+
+
+class TestCouponPolicy:
+    """Thresholds are versioned data, so a rule change cannot alter a paid month."""
+
+    def test_defaults_match_the_approved_august_workbook(self):
+        from app.engines.qualification import CouponPolicy
+        p = CouponPolicy()
+        assert p.min_sales_for("G10", 10) == 8
+        assert p.min_sales_for("G5", 5) == 5
+        assert p.min_sales_for("G3", 3) == 3
+        assert p.min_own_sales_for("G10") == 5
+        assert p.min_own_sales_for("G3") == 3
+
+    def test_a_changed_threshold_changes_the_verdict(self):
+        """G10 at 8: nine clubbed sales qualify. Raise it to 10 and they do not."""
+        from app.engines.qualification import CouponPolicy
+        s = sig("AAA10MMA", "NHP001", "COL1")
+        rows = sales("AAA10MMA", 9)
+
+        lenient = run_qualification(rows, [s], policy=CouponPolicy())
+        assert lenient.signatures[s.coupon_signature].qualification_3 is True
+
+        strict = run_qualification(
+            rows, [s],
+            policy=CouponPolicy(min_sales={"G10": 10}, min_own_sales={"G3": 3}),
+        )
+        assert strict.signatures[s.coupon_signature].qualification_3 is False
+
+    def test_the_own_sales_floor_is_configurable(self):
+        from app.engines.qualification import CouponPolicy
+        a = sig("BBB10MMA", "NHP001", "COL2")
+        b = sig("BBB10MMB", "NHP001", "COL2")
+        rows = sales("BBB10MMA", 4) + sales("BBB10MMB", 20)
+
+        # Default floor of 5 refuses the four-sale coupon.
+        assert run_qualification(rows, [a, b]).signatures[
+            a.coupon_signature].qualification_3 is False
+
+        # Lower it to 4 and the same data qualifies.
+        relaxed = run_qualification(
+            rows, [a, b], policy=CouponPolicy(default_min_own_sales=4)
+        )
+        assert relaxed.signatures[a.coupon_signature].qualification_3 is True
+
+    def test_an_unknown_group_size_still_falls_back_to_80_percent(self):
+        from app.engines.qualification import CouponPolicy
+        assert CouponPolicy().min_sales_for("G50", 50) == 40
+
+    def test_the_policy_overrides_the_coupon_masters_own_value(self):
+        """The versioned rule is the auditable source, not the imported column."""
+        from app.engines.qualification import CouponPolicy
+        s = sig("CCC10MMA", "NHP001", "COL3")
+        s.min_sales = 2                       # stale value from an old import
+        res = run_qualification(sales("CCC10MMA", 3), [s], policy=CouponPolicy())
+        assert res.signatures[s.coupon_signature].min_sales == 8
+        assert res.signatures[s.coupon_signature].qualification_3 is False

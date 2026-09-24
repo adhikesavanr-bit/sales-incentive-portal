@@ -130,9 +130,66 @@ export const api = {
     reason: string;
   }) => request<TargetRow>("/api/targets", { method: "POST", body: JSON.stringify(body) }),
 
-  employees: () => request<EmployeeRow[]>("/api/employees"),
 
   rules: () => request<RuleRow[]>("/api/incentive/rules"),
+
+  employees: (includeInactive = false) =>
+    request<EmployeeRow[]>(`/api/employees?include_inactive=${includeInactive}`),
+
+  assignableRoles: () => request<RoleOption[]>("/api/employees/roles"),
+
+  createEmployee: (body: EmployeeRow, reason: string) =>
+    request<EmployeeRow>("/api/employees", {
+      method: "POST",
+      body: JSON.stringify({ ...body, reason }),
+    }),
+
+  updateEmployee: (id: string, body: EmployeeRow, reason: string) =>
+    request<EmployeeRow>(`/api/employees/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({ ...body, reason }),
+    }),
+
+  deactivateEmployee: (id: string, exitDate: string, reason: string) =>
+    request<EmployeeRow>(`/api/employees/${id}/deactivate`, {
+      method: "POST",
+      body: JSON.stringify({ exit_date: exitDate, reason }),
+    }),
+
+  couponRules: (period: string) =>
+    request<{ period: string; rules: CouponRule[]; editable: boolean }>(
+      `/api/rules/coupons?period=${period}`,
+    ),
+
+  updateCouponRule: (body: {
+    group_size: string;
+    required_sales: number;
+    min_sales: number;
+    min_own_sales: number;
+    effective_from: string;
+    reason: string;
+  }) =>
+    request<CouponRule>("/api/rules/coupons", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  slabs: (period: string) =>
+    request<{ period: string; scopes: Record<string, SlabRow[]>; editable: boolean }>(
+      `/api/rules/slabs?period=${period}`,
+    ),
+
+  updateSlab: (body: {
+    scope: string;
+    threshold: number;
+    rate: number;
+    effective_from: string;
+    reason: string;
+  }) =>
+    request<SlabRow>("/api/rules/slabs", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
 
   audit: (limit = 200) => request<AuditRow[]>(`/api/audit?limit=${limit}`),
 
@@ -267,15 +324,41 @@ export interface TargetRow {
 export interface EmployeeRow {
   employee_id: string;
   full_name: string;
-  email: string | null;
+  email?: string | null;
+  initial?: string | null;
   role: string;
-  designation: string | null;
-  region: string | null;
-  zone: string | null;
-  submanager_id: string | null;
-  rm_id: string | null;
-  zm_id: string | null;
+  designation?: string | null;
+  region?: string | null;
+  zone?: string | null;
+  submanager_id?: string | null;
+  rm_id?: string | null;
+  zm_id?: string | null;
   is_active: boolean;
+  exit_date?: string | null;
+}
+
+export interface RoleOption {
+  value: string;
+  label: string;
+}
+
+export interface CouponRule {
+  group_size: string;
+  required_sales: number;
+  min_sales: number;
+  min_own_sales: number;
+  effective_from: string | null;
+  effective_to: string | null;
+  reason: string | null;
+  updated_by: string | null;
+}
+
+export interface SlabRow {
+  scope: string;
+  threshold: number;
+  rate: number;
+  effective_from: string | null;
+  source_note: string | null;
 }
 
 export interface RuleRow {

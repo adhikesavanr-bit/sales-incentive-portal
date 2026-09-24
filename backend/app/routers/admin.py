@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from app.db import bigquery as bq
 from app.models.schemas import Employee, MonthStatus
 from app.services import (
     audit,
+    coupon_rules,
     employees as employee_service,
     incentive_run,
     month,
@@ -25,9 +26,36 @@ router = APIRouter(prefix="/api", tags=["admin"])
 
 # --- employees -------------------------------------------------------------
 @router.get("/employees")
-def list_employees(principal: Principal = Depends(current_principal)):
+def list_employees(
+    include_inactive: bool = Query(False),
+    principal: Principal = Depends(current_principal),
+):
     scope, params = visible_employee_sql(principal)
-    return employee_service.list_in_scope(scope, params)
+    people = employee_service.list_in_scope(scope, params)
+    if not include_inactive:
+        people = [p for p in people if p.is_active]
+    return people
+
+
+@router.get("/employees/roles")
+def assignable_roles(
+    principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),
+):
+    """Roles this caller may hand out.
+
+    Nobody can create a role more powerful than their own, so a team admin
+    cannot promote someone to Finance and thereby see company-wide pay.
+    """
+    everyday = [Role.BDE, Role.SUB_MANAGER, Role.REGIONAL_MANAGER,
+                Role.ZONAL_MANAGER, Role.TEAM_ADMIN]
+    if principal.role in (Role.SUPER_ADMIN, Role.FINANCE_ADMIN):
+        everyday += [Role.BUSINESS_HEAD, Role.FINANCE_ADMIN]
+    if principal.role is Role.SUPER_ADMIN:
+        everyday += [Role.SUPER_ADMIN]
+    return [
+        {"value": r.value, "label": r.value.replace("_", " ").title()}
+        for r in everyday
+    ]
 
 
 @router.post("/employees", status_code=status.HTTP_201_CREATED)
@@ -72,6 +100,62 @@ def update_employee(
     return employee
 
 
+class DeactivateIn(BaseModel):
+    exit_date: date
+    reason: str = Field(..., min_length=3)
+
+
+@router.post("/employees/{employee_id}/deactivate")
+def deactivate_employee(
+    employee_id: str,
+    body: DeactivateIn,
+    principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),
+):
+    """Record that someone has left.
+
+    Their record is closed, not deleted: past months still need an owner for
+    every sale, and the audit trail has to stay readable.
+    """
+    existing = employee_service.get_by_id(employee_id)
+    if existing is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No employee {employee_id}.")
+
+    scope, sparams = visible_employee_sql(principal)
+    if not employee_service.is_in_scope(employee_id, scope, sparams):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "No such employee in your reporting line."
+        )
+
+    updated = employee_service.deactivate(employee_id, body.exit_date, principal.email)
+    audit.record(
+        principal.email, "EMPLOYEE_DEACTIVATE", entity_type="employee",
+        affected_record=employee_id,
+        old_value={"is_active": True},
+        new_value={"is_active": False, "exit_date": body.exit_date.isoformat()},
+        reason=body.reason,
+    )
+    return updated
+
+
+@router.post("/employees/{employee_id}/reactivate")
+def reactivate_employee(
+    employee_id: str,
+    reason: str = Query(..., min_length=3),
+    principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),
+):
+    existing = employee_service.get_by_id(employee_id)
+    if existing is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No employee {employee_id}.")
+    existing.is_active = True
+    existing.exit_date = None
+    employee_service.upsert(existing, principal.email)
+    audit.record(
+        principal.email, "EMPLOYEE_REACTIVATE", entity_type="employee",
+        affected_record=employee_id, new_value={"is_active": True}, reason=reason,
+    )
+    return existing
+
+
 # --- targets ---------------------------------------------------------------
 class TargetUpsert(BaseModel):
     employee_id: str
@@ -88,12 +172,17 @@ def list_targets(
 ):
     s = get_settings()
     scope, params = visible_employee_sql(principal)
+    # LEFT JOIN from people to targets, so someone with no target for the
+    # period still appears with a blank row to fill in. The previous inner
+    # join is why a fresh month looked empty.
     return bq.query(
         f"""
-        SELECT t.*, h.full_name, h.region, h.zone
-        FROM {s.table('targets')} t
-        JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
-        WHERE t.period = @p AND {scope}
+        SELECT h.employee_id, h.full_name, h.region, h.zone, h.designation,
+               t.period, t.target_units, t.winner_units, t.status, t.version
+        FROM {s.table('v_employee_hierarchy')} h
+        LEFT JOIN {s.table('targets')} t
+          ON t.employee_id = h.employee_id AND t.period = @p
+        WHERE h.is_active AND {scope}
         ORDER BY h.region, h.full_name
         """,
         {**params, "p": period},
@@ -192,6 +281,170 @@ def create_rule(
         affected_record=rule["rule_id"], new_value=rule, reason=reason,
     )
     return rule
+
+
+# --- coupon qualification rules -------------------------------------------
+class CouponRuleIn(BaseModel):
+    group_size: str = Field(..., pattern=r"^G\d+$")
+    required_sales: int = Field(..., ge=1)
+    min_sales: int = Field(..., ge=1)
+    min_own_sales: int = Field(..., ge=0)
+    effective_from: date
+    reason: str = Field(..., min_length=3)
+
+
+@router.get("/rules/coupons")
+def list_coupon_rules(
+    period: str = Query(None, pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(current_principal),
+):
+    """The thresholds in force for a period, defaulting to this month."""
+    target = period or datetime.now(timezone.utc).strftime("%Y-%m")
+    return {
+        "period": target,
+        "rules": coupon_rules.for_period(target),
+        "editable": principal.can(Permission.MANAGE_RULES),
+    }
+
+
+@router.get("/rules/coupons/history")
+def coupon_rule_history(
+    group_size: str | None = Query(None, pattern=r"^G\d+$"),
+    principal: Principal = Depends(require(Permission.MANAGE_RULES)),
+):
+    return coupon_rules.history(group_size)
+
+
+@router.put("/rules/coupons")
+def update_coupon_rule(
+    body: CouponRuleIn,
+    principal: Principal = Depends(require(Permission.MANAGE_RULES)),
+):
+    """Write a new version of one group size's thresholds.
+
+    Refused if it would change a month that is already approved or locked: the
+    numbers in those months have been reported, and a rule edit must not
+    silently reach back into them.
+    """
+    changed_period = body.effective_from.strftime("%Y-%m")
+    status_then = month.get_status(changed_period)
+    if status_then in (MonthStatus.APPROVED, MonthStatus.LOCKED):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{changed_period} is {status_then.value.lower()}. Choose a later "
+            f"effective date, or reopen that month first.",
+        )
+
+    before = {r.group_size: r for r in coupon_rules.for_period(changed_period)}
+    updated = coupon_rules.update(
+        body.group_size, body.required_sales, body.min_sales,
+        body.min_own_sales, body.effective_from, body.reason, principal.email,
+    )
+    audit.record(
+        principal.email, "COUPON_RULE_UPDATE", entity_type="coupon_rule",
+        affected_record=body.group_size,
+        old_value=before.get(body.group_size).model_dump()
+        if body.group_size in before else None,
+        new_value=updated.model_dump(), reason=body.reason,
+    )
+    return updated
+
+
+class SlabIn(BaseModel):
+    scope: str
+    threshold: float = Field(..., ge=0)
+    rate: float = Field(..., ge=0, le=1)
+    effective_from: date
+    reason: str = Field(..., min_length=3)
+
+
+@router.get("/rules/slabs")
+def list_slabs(
+    period: str = Query(None, pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(current_principal),
+):
+    """Achievement slabs in force for a period, grouped by scope."""
+    target = period or datetime.now(timezone.utc).strftime("%Y-%m")
+    s = get_settings()
+    rows = bq.query(
+        f"""
+        SELECT scope, threshold, rate, effective_from, source_note
+        FROM {s.table('incentive_rules')}
+        WHERE effective_from <= LAST_DAY(PARSE_DATE('%Y-%m', @p))
+          AND (effective_to IS NULL OR effective_to >= PARSE_DATE('%Y-%m', @p))
+        QUALIFY ROW_NUMBER() OVER (
+          PARTITION BY scope, threshold ORDER BY effective_from DESC
+        ) = 1
+        ORDER BY scope, threshold
+        """,
+        {"p": target},
+    )
+    grouped: dict[str, list] = {}
+    for r in rows:
+        grouped.setdefault(r["scope"], []).append(r)
+    return {
+        "period": target,
+        "scopes": grouped,
+        "editable": principal.can(Permission.MANAGE_RULES),
+    }
+
+
+@router.put("/rules/slabs")
+def update_slab(
+    body: SlabIn,
+    principal: Principal = Depends(require(Permission.MANAGE_RULES)),
+):
+    """Change the rate on one slab, effective from a date.
+
+    Same protection as the coupon rules: an edit landing in an approved or
+    locked month is refused rather than silently changing a reported figure.
+    """
+    changed_period = body.effective_from.strftime("%Y-%m")
+    status_then = month.get_status(changed_period)
+    if status_then in (MonthStatus.APPROVED, MonthStatus.LOCKED):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"{changed_period} is {status_then.value.lower()}. Choose a later "
+            f"effective date, or reopen that month first.",
+        )
+
+    s = get_settings()
+    eff = body.effective_from.isoformat()
+    old = bq.query(
+        f"SELECT rate FROM {s.table('incentive_rules')} "
+        "WHERE scope = @s AND threshold = @t AND effective_to IS NULL LIMIT 1",
+        {"s": body.scope, "t": body.threshold},
+    )
+    bq.query(
+        f"UPDATE {s.table('incentive_rules')} SET effective_to = DATE(@eff) "
+        "WHERE scope = @s AND threshold = @t AND effective_to IS NULL "
+        "  AND effective_from < DATE(@eff)",
+        {"s": body.scope, "t": body.threshold, "eff": eff},
+    )
+    bq.query(
+        f"DELETE FROM {s.table('incentive_rules')} "
+        "WHERE scope = @s AND threshold = @t AND effective_from = DATE(@eff)",
+        {"s": body.scope, "t": body.threshold, "eff": eff},
+    )
+    bq.insert_rows("incentive_rules", [{
+        "rule_id": str(uuid.uuid4()),
+        "scope": body.scope,
+        "vertical": "Marrow",
+        "threshold": body.threshold,
+        "rate": body.rate,
+        "effective_from": eff,
+        "source_note": body.reason,
+        "created_by": principal.email,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }])
+    audit.record(
+        principal.email, "SLAB_UPDATE", entity_type="incentive_rule",
+        affected_record=f"{body.scope}@{body.threshold}",
+        old_value={"rate": float(old[0]["rate"])} if old else None,
+        new_value={"rate": body.rate}, reason=body.reason,
+    )
+    return {"scope": body.scope, "threshold": body.threshold, "rate": body.rate,
+            "effective_from": eff}
 
 
 # --- source tables ---------------------------------------------------------

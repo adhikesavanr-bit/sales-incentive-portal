@@ -145,6 +145,9 @@ CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.employee_master` (
   zone             STRING,
   vertical         STRING,
   is_active        BOOL NOT NULL,
+  -- The day they left. Kept rather than deleting the row: their past months
+  -- still need an owner, and the audit trail must stay readable.
+  exit_date        DATE,
   effective_from   DATE NOT NULL,
   effective_to     DATE,
   updated_at       TIMESTAMP,
@@ -207,6 +210,24 @@ CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.incentive_rules` (
   created_at        TIMESTAMP
 )
 CLUSTER BY scope, effective_from;
+
+-- Coupon qualification thresholds. Effective-dated, because changing a rule
+-- must never alter a month that has already been calculated and paid: a run
+-- for 2026-08 reads the row that was in force on 2026-08-01, whatever the
+-- current rule says.
+CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.coupon_rules` (
+  rule_id        STRING NOT NULL,
+  group_size     STRING NOT NULL,   -- G3 / G5 / G7 / G10 / G15 / G20 / G25
+  required_sales INT64  NOT NULL,   -- the coupon's nominal size
+  min_sales      INT64  NOT NULL,   -- clubbed sales needed to qualify
+  min_own_sales  INT64  NOT NULL,   -- sales the coupon must make on its own
+  effective_from DATE   NOT NULL,
+  effective_to   DATE,
+  reason         STRING,
+  updated_by     STRING,
+  updated_at     TIMESTAMP
+)
+CLUSTER BY group_size, effective_from;
 
 -- ---------------------------------------------------------------------------
 -- Calculated incentives, versioned so a locked month keeps its numbers.
@@ -354,7 +375,7 @@ CLUSTER BY user_email, action;
 CREATE OR REPLACE VIEW `${PROJECT}.${DATASET}.v_employee_hierarchy` AS
 SELECT
   e.employee_id, e.full_name, e.email, e.role, e.designation,
-  e.region, e.zone, e.vertical, e.is_active,
+  e.region, e.zone, e.vertical, e.is_active, e.exit_date,
   h.submanager_id, h.rm_id, h.zm_id, h.business_head_id
 FROM `${PROJECT}.${DATASET}.employee_master` e
 LEFT JOIN `${PROJECT}.${DATASET}.reporting_hierarchy` h
