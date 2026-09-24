@@ -615,3 +615,49 @@ class TestDashboardSaleQueries:
         with pytest.raises(HTTPException) as e:
             router.employee_coupons("NHP999", period="2026-08", principal=principal(Role.BDE))
         assert e.value.status_code == 404
+
+
+class TestConsolidatedDashboard:
+    """Admins, business heads, ZMs and RMs see their whole scope added up."""
+
+    def _capture(self, monkeypatch, rows):
+        from app.services import dashboards
+        seen = {}
+        monkeypatch.setattr(dashboards.bq, "query",
+                            lambda sql, params=None: seen.update(sql=sql, params=params) or rows)
+        return dashboards, seen
+
+    def test_sums_are_scoped_and_ratios_recomputed(self, monkeypatch):
+        d, seen = self._capture(monkeypatch, [{
+            "people": 3, "headcount": 2, "target_units": 40, "achieved_units": 30,
+            "gross_units": 32, "gross_net_revenue": 960000,
+            "target_revenue": 1000000, "qualified_revenue": 800000,
+        }])
+        out = d.consolidated(principal(Role.REGIONAL_MANAGER), "2026-08")
+        assert "h.rm_id = @scope_id" in seen["sql"]
+        assert seen["params"]["p"] == "2026-08"
+        assert out["people"] == 3
+        assert out["unit_pct"] == 0.75
+        assert out["revenue_pct"] == 0.8
+        assert out["arpu"] == 30000
+
+    def test_nobody_in_scope_is_none(self, monkeypatch):
+        d, _ = self._capture(monkeypatch, [{"people": 0}])
+        assert d.consolidated(principal(Role.ZONAL_MANAGER), "2026-08") is None
+
+    def test_a_bde_cannot_ask_for_it(self):
+        import asyncio
+        from fastapi import HTTPException
+        from app.auth.deps import require
+        from app.auth.rbac import Permission
+        guard = require(Permission.VIEW_TEAM)
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(guard(principal=principal(Role.BDE)))
+        assert e.value.status_code == 403
+
+    def test_the_scope_is_named_for_the_caller(self):
+        from app.routers.dashboards import _scope_label
+        assert _scope_label(principal(Role.SUPER_ADMIN)) == "Company"
+        rm = principal(Role.REGIONAL_MANAGER)
+        rm.region = "South"
+        assert _scope_label(rm) == "South region"

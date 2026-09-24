@@ -15,17 +15,19 @@ export function PayoutHeadline({
   netPayable,
   accumulation,
   cap = 200000,
+  label = "Incentive earned this month",
 }: {
   total: number;
   netPayable: number;
   accumulation: number;
   cap?: number;
+  label?: string;
 }) {
   const paidShare = total > 0 ? netPayable / total : 0;
 
   return (
     <section className="panel p-6 sm:p-8">
-      <div className="label">Incentive earned this month</div>
+      <div className="label">{label}</div>
       <div className="mt-1 text-display font-semibold tabular text-teal-deep">
         {rupees(total)}
       </div>
@@ -63,7 +65,7 @@ export function PayoutHeadline({
             </div>
           </dl>
           <p className="mt-4 border-t border-rule pt-4 text-sm text-ink-muted">
-            Policy pays at most {rupeesShort(cap)} in any one month. The balance
+            Policy pays each person at most {rupeesShort(cap)} in any one month. The balance
             accumulates and is released at the end of the financial year.
           </p>
         </>

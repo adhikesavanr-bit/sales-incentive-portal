@@ -9,7 +9,9 @@ import { DownloadButton } from "@/components/DownloadButton";
 import { PayoutHeadline } from "@/components/PayoutHeadline";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { SlabRuler } from "@/components/SlabRuler";
-import { api, type Breakdown, type Transaction } from "@/lib/api";
+import Link from "next/link";
+
+import { api, type Breakdown, type Consolidated, type Me, type Transaction } from "@/lib/api";
 import { count, monthLabel, percent, rupees, rupeesShort } from "@/lib/format";
 
 // recharts is loaded on its own, after the figures render.
@@ -26,6 +28,14 @@ const BDE_SLABS = [
   { from: 1.3, rate: 0.03 },
 ];
 
+// Who opens "My performance" to the consolidated figures. Admins and business
+// heads have no incentive row of their own, so theirs would always be empty;
+// RMs and ZMs have both, and choose.
+const CONSOLIDATED_ONLY = new Set(["SUPER_ADMIN", "FINANCE_ADMIN", "BUSINESS_HEAD"]);
+const CAN_TOGGLE = new Set(["REGIONAL_MANAGER", "ZONAL_MANAGER"]);
+
+type View = "me" | "team";
+
 function defaultPeriod(): string {
   const d = new Date();
   d.setMonth(d.getMonth() - 1);
@@ -38,13 +48,23 @@ export default function DashboardPage() {
   const [sales, setSales] = useState<Transaction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"ALL" | "QUALIFIED" | "DISQUALIFIED">("ALL");
+  const [me, setMe] = useState<Me | null>(null);
+  const [view, setView] = useState<View>("me");
 
   useEffect(() => {
+    api.me().then(setMe).catch(() => {});
+  }, []);
+
+  const role = me?.role ?? "";
+  const mode: View | null = !me ? null : CONSOLIDATED_ONLY.has(role) ? "team" : view;
+
+  useEffect(() => {
+    if (mode !== "me") return;
     setData(null);
     setError(null);
     api.myDashboard(period).then(setData).catch((e) => setError(e.message));
     api.mySales(period).then(setSales).catch(() => setSales([]));
-  }, [period]);
+  }, [period, mode]);
 
   const rows = sales.filter((s) => filter === "ALL" || s.status === filter);
 
@@ -55,9 +75,26 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">My performance</h1>
           <p className="text-sm text-ink-muted">{monthLabel(period)}</p>
         </div>
-        <div className="flex items-start gap-2">
+        <div className="flex flex-wrap items-start gap-2">
+          {CAN_TOGGLE.has(role) && (
+            <div role="group" aria-label="Whose figures" className="flex rounded-card border border-rule bg-surface p-0.5">
+              {(["me", "team"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  onClick={() => setView(v)}
+                  className={`rounded-card px-3 py-1.5 text-sm ${
+                    view === v ? "bg-ink text-white" : "text-ink-muted"
+                  }`}
+                >
+                  {v === "me" ? "My data" : "My data + Team"}
+                </button>
+              ))}
+            </div>
+          )}
           <PeriodPicker value={period} onChange={setPeriod} />
-          {data && !data.status && (
+          {mode === "me" && data && !data.status && (
             <DownloadButton onDownload={() => api.exportStatementPdf(period)}>
               Export PDF
             </DownloadButton>
@@ -65,19 +102,21 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {error && (
+      {mode === "team" && <ConsolidatedView period={period} />}
+
+      {mode === "me" && error && (
         <p role="alert" className="mt-6 panel bg-disqualified-wash p-4 text-sm text-disqualified">
           {error}
         </p>
       )}
 
-      {data?.status && (
+      {mode === "me" && data?.status && (
         <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">
           {data.message}
         </div>
       )}
 
-      {data && !data.status && (
+      {mode === "me" && data && !data.status && (
         <>
           <div className="mt-6 grid gap-4 lg:grid-cols-5">
             <div className="lg:col-span-3">
@@ -208,6 +247,90 @@ export default function DashboardPage() {
         </>
       )}
     </AppShell>
+  );
+}
+
+/** The caller and everyone below them, added up. No sales list: at this scale
+ * it belongs on My team, one person at a time. */
+function ConsolidatedView({ period }: { period: string }) {
+  const [data, setData] = useState<Consolidated | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    api.myConsolidated(period).then(setData).catch((e) => setError(e.message));
+  }, [period]);
+
+  if (error) {
+    return (
+      <p role="alert" className="mt-6 panel bg-disqualified-wash p-4 text-sm text-disqualified">
+        {error}
+      </p>
+    );
+  }
+  if (!data) {
+    return <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">Loading…</div>;
+  }
+  if (data.status) {
+    return (
+      <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">{data.message}</div>
+    );
+  }
+
+  return (
+    <>
+      <p className="mt-6 text-sm text-ink-muted">
+        {data.scope_label} · {count(data.people)} people with figures this month
+      </p>
+      <div className="mt-3">
+        <PayoutHeadline
+          label={`Incentive earned · ${data.scope_label}`}
+          total={data.total_incentive}
+          netPayable={data.net_payable}
+          accumulation={data.accumulation}
+        />
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Stat label="Target" value={`${count(data.target_units)} units`}
+              sub={rupeesShort(data.target_revenue)} />
+        <Stat label="Sold" value={`${count(data.gross_units)} units`}
+              sub={rupeesShort(data.gross_revenue)} />
+        <Stat label="Qualified" value={rupeesShort(data.qualified_revenue)}
+              sub={`${count(data.achieved_units)} units counted`} tone="qualified" />
+        <Stat label="Disqualified" value={rupeesShort(data.disqualified_revenue)}
+              sub={`${count(data.disqualified_units)} sales`} tone="disqualified" />
+      </div>
+
+      <section className="panel mt-4 p-6">
+        <h2 className="text-sm font-semibold">Totals for {data.scope_label}</h2>
+        <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
+          <Line term="Qualified revenue (excl. GST)" value={rupees(data.qualified_revenue)} />
+          <Line term="Target revenue" value={rupees(data.target_revenue)} />
+          <Line term="Revenue achievement" value={percent(data.revenue_pct)} />
+          <Line term="Unit achievement" value={percent(data.unit_pct)} />
+          <Line term="ARPU" value={rupees(data.arpu)} />
+          <Line term="People with sales" value={count(data.headcount)} />
+          <Line term="BDE incentive" value={rupees(data.bde_incentive)} />
+          <Line term="Sub-manager incentive" value={rupees(data.submanager_incentive)} />
+        </dl>
+        <p className="mt-4 border-t border-rule pt-4 text-sm text-ink-muted">
+          Sums of each person&rsquo;s stored figures; achievement is recomputed from the
+          totals. For one person&rsquo;s breakdown and sales, open{" "}
+          <Link href="/team" className="underline">My team</Link>.
+        </p>
+      </section>
+
+      {data.trend && data.trend.length > 0 && (
+        <section className="panel mt-4 p-6">
+          <h2 className="text-sm font-semibold">Daily sales</h2>
+          <div className="mt-4 h-56">
+            <DailySalesChart data={data.trend} />
+          </div>
+        </section>
+      )}
+    </>
   );
 }
 

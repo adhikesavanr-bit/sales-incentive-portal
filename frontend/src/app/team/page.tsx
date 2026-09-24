@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { DownloadButton } from "@/components/DownloadButton";
 import { PeriodPicker } from "@/components/PeriodPicker";
-import { api, type Rollup } from "@/lib/api";
+import { api, type EmployeeMetricRow, type Rollup } from "@/lib/api";
 import { count, monthLabel, percent, rupeesShort } from "@/lib/format";
 
 /**
@@ -21,6 +21,13 @@ function defaultPeriod(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// Which field of a person's row each grouping keys on, to list a group's people.
+const GROUP_FIELD: Record<string, keyof EmployeeMetricRow> = {
+  region: "region",
+  zone: "zone",
+  submanager: "submanager_id",
+};
+
 const GROUPINGS = [
   { key: "", label: "People" },
   { key: "region", label: "By region" },
@@ -33,6 +40,24 @@ export default function TeamPage() {
   const [groupBy, setGroupBy] = useState("");
   const [data, setData] = useState<Rollup | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  useEffect(() => setOpen(new Set()), [groupBy, period]);
+
+  function toggle(key: string) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function membersOf(key: unknown): EmployeeMetricRow[] {
+    const field = GROUP_FIELD[groupBy];
+    if (!field || !data) return [];
+    return data.employees.filter((e) => (e[field] ?? null) === (key ?? null));
+  }
 
   useEffect(() => {
     setData(null);
@@ -106,9 +131,28 @@ export default function TeamPage() {
               </tr>
             </thead>
             <tbody>
-              {data.groups.map((g) => (
-                <tr key={String(g.group_key)} className="border-t border-rule">
-                  <td className="p-3 font-medium">{String(g.group_key ?? "Unassigned")}</td>
+              {data.groups.map((g) => {
+                const key = String(g.group_key ?? "");
+                const expanded = open.has(key);
+                return (
+                <Fragment key={key}>
+                <tr
+                  className="cursor-pointer border-t border-rule hover:bg-canvas"
+                  onClick={() => toggle(key)}
+                >
+                  <td className="p-3 font-medium">
+                    <button
+                      type="button"
+                      aria-expanded={expanded}
+                      onClick={(ev) => { ev.stopPropagation(); toggle(key); }}
+                      className="flex items-center gap-2 text-left"
+                    >
+                      <span aria-hidden className="inline-block w-3 text-ink-faint">
+                        {expanded ? "▾" : "▸"}
+                      </span>
+                      {String(g.group_key ?? "Unassigned")}
+                    </button>
+                  </td>
                   <td className="p-3 text-right">{count(g.headcount as number)}</td>
                   <td className="p-3 text-right">{rupeesShort(g.target_revenue as number)}</td>
                   <td className="p-3 text-right text-qualified">
@@ -121,7 +165,16 @@ export default function TeamPage() {
                     {rupeesShort(g.incentive_liability as number)}
                   </td>
                 </tr>
-              ))}
+                {expanded && (
+                  <tr className="bg-canvas/60">
+                    <td colSpan={6} className="px-3 pb-3 pt-0">
+                      <GroupMembers people={membersOf(g.group_key)} period={period} />
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </section>
@@ -176,6 +229,48 @@ export default function TeamPage() {
         </section>
       )}
     </AppShell>
+  );
+}
+
+function GroupMembers({ people, period }: { people: EmployeeMetricRow[]; period: string }) {
+  if (people.length === 0) {
+    return <p className="p-3 text-sm text-ink-muted">No one in this group.</p>;
+  }
+  return (
+    <table className="w-full text-sm">
+      <thead className="text-left text-micro text-ink-muted">
+        <tr>
+          <th className="py-2 pl-8 pr-3 font-medium">Name</th>
+          <th className="p-2 text-right font-medium">Target</th>
+          <th className="p-2 text-right font-medium">Achieved</th>
+          <th className="p-2 text-right font-medium">Achievement</th>
+          <th className="p-2 text-right font-medium">Qualified</th>
+          <th className="p-2 text-right font-medium">Incentive</th>
+        </tr>
+      </thead>
+      <tbody>
+        {people.map((e) => (
+          <tr key={e.employee_id} className="border-t border-rule">
+            <td className="py-2 pl-8 pr-3">
+              <Link
+                href={`/team/${e.employee_id}?period=${period}`}
+                className="font-medium underline decoration-rule underline-offset-2"
+              >
+                {e.full_name}
+              </Link>
+              <span className="ml-2 text-micro text-ink-faint">
+                {e.employee_id} · {e.designation ?? "—"}
+              </span>
+            </td>
+            <td className="p-2 text-right">{count(e.target_units)}</td>
+            <td className="p-2 text-right">{count(e.achieved_units)}</td>
+            <td className="p-2 text-right font-medium">{percent(e.base_pct)}</td>
+            <td className="p-2 text-right">{rupeesShort(e.qualified_revenue)}</td>
+            <td className="p-2 text-right">{rupeesShort(e.total_incentive)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

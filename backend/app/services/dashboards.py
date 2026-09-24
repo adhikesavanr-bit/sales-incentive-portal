@@ -45,6 +45,7 @@ def team_rows(principal: Principal, period: str) -> list[dict]:
     return bq.query(
         f"""
         SELECT h.employee_id, h.full_name, h.designation, h.region, h.zone,
+               h.submanager_id, h.rm_id,
                m.target_units, m.achieved_units, m.unit_pct,
                m.target_revenue, m.qualified_revenue, m.disqualified_revenue,
                m.revenue_pct, m.base_pct, m.arpu,
@@ -84,6 +85,54 @@ def summary(principal: Principal, period: str) -> dict:
     r["achievement_pct"] = (qualified / target_rev) if target_rev else 0.0
     r["qualification_pct"] = (qualified / gross_net) if gross_net else 0.0
     return r
+
+
+_SUMMED = (
+    "target_units", "gross_units", "achieved_units", "disqualified_units",
+    "foundation_units", "target_revenue", "gross_revenue", "gross_net_revenue",
+    "qualified_revenue", "disqualified_revenue", "bde_incentive",
+    "submanager_incentive", "total_incentive", "accumulation", "net_payable",
+)
+
+
+def consolidated(principal: Principal, period: str) -> dict | None:
+    """Everyone the principal can see, including themselves, added up.
+
+    The same fields as one person's breakdown where a sum means something.
+    Ratios are recomputed from the sums rather than averaged; rates and slabs
+    are per person and have no consolidated value, so they are left out.
+    None when nobody in scope has a row for the period.
+    """
+    s = get_settings()
+    scope, params = visible_employee_sql(principal)
+    sums = ",\n".join(f"SUM(m.{c}) AS {c}" for c in _SUMMED)
+    rows = bq.query(
+        f"""
+        SELECT COUNT(DISTINCT m.employee_id) AS people,
+               COUNT(DISTINCT CASE WHEN m.is_active THEN m.employee_id END) AS headcount,
+               {sums}
+        FROM {s.table('v_incentive_current')} m
+        JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
+        WHERE m.period = @p AND {scope}
+        """,
+        {**params, "p": period},
+    )
+    r = rows[0] if rows else {}
+    if not r.get("people"):
+        return None
+    f = {c: float(r.get(c) or 0) for c in _SUMMED}
+    return {
+        "period": period,
+        "people": int(r["people"]),
+        "headcount": int(r.get("headcount") or 0),
+        **f,
+        "unit_pct": f["achieved_units"] / f["target_units"] if f["target_units"] else 0.0,
+        "revenue_pct": (
+            f["qualified_revenue"] / f["target_revenue"] if f["target_revenue"] else 0.0
+        ),
+        # As the engine defines it per person: net revenue over units sold.
+        "arpu": f["gross_net_revenue"] / f["gross_units"] if f["gross_units"] else 0.0,
+    }
 
 
 def group_by(principal: Principal, period: str, dimension: str) -> list[dict]:
@@ -198,6 +247,26 @@ def daily_trend(employee_ids: list[str], period: str) -> list[dict]:
         GROUP BY day ORDER BY day
         """,
         {"p": period, "ids": employee_ids},
+    )
+
+
+def scope_trend(principal: Principal, period: str) -> list[dict]:
+    """Daily sales for everyone the principal can see."""
+    s = get_settings()
+    scope, params = visible_employee_sql(principal)
+    return bq.query(
+        f"""
+        {_with(period)}
+        SELECT DATE(r.payment_date_ist, 'Asia/Kolkata') AS day,
+               COUNT(*) AS units,
+               SUM(q.net_amount) AS net_revenue,
+               SUM(CASE WHEN q.status = 'QUALIFIED' THEN q.net_amount ELSE 0 END) AS qualified_revenue
+        FROM q JOIN sales r ON r.payment_id = q.payment_id
+        JOIN {s.table('v_employee_hierarchy')} h ON h.employee_id = q.employee_id
+        WHERE {scope}
+        GROUP BY day ORDER BY day
+        """,
+        {**params, "p": period},
     )
 
 

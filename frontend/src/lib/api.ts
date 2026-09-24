@@ -196,6 +196,10 @@ export const api = {
     request<Breakdown>(`/api/me/dashboard?period=${period}`),
 
   // 1000 is the API's ceiling; a month's sales for one person fit well within it.
+  /** The caller and everyone they can see, added up. Managers and above. */
+  myConsolidated: (period: string) =>
+    request<Consolidated>(`/api/me/consolidated?period=${period}`),
+
   mySales: (period: string, limit = 1000, offset = 0) =>
     request<Transaction[]>(
       `/api/me/sales?period=${period}&limit=${limit}&offset=${offset}`,
@@ -382,6 +386,33 @@ export interface Breakdown {
   plan_mix?: { plan_title: string; units: number; net_revenue: number }[];
 }
 
+/** Everyone in the caller's scope, added up for the period. */
+export interface Consolidated {
+  status?: "NOT_CALCULATED" | "NO_SALES";
+  message?: string;
+  period: string;
+  scope_label: string;
+  people: number;
+  headcount: number;
+  target_units: number;
+  gross_units: number;
+  achieved_units: number;
+  disqualified_units: number;
+  target_revenue: number;
+  gross_revenue: number;
+  qualified_revenue: number;
+  disqualified_revenue: number;
+  unit_pct: number;
+  revenue_pct: number;
+  arpu: number;
+  bde_incentive: number;
+  submanager_incentive: number;
+  total_incentive: number;
+  accumulation: number;
+  net_payable: number;
+  trend?: Breakdown["trend"];
+}
+
 /** One coupon's verdict for a month: the workbook's "Coupon Analysis" block. */
 export interface CouponVerdict {
   coupon_signature: string;
@@ -429,6 +460,8 @@ export interface EmployeeMetricRow {
   designation: string | null;
   region: string | null;
   zone: string | null;
+  submanager_id: string | null;
+  rm_id: string | null;
   target_units: number | null;
   achieved_units: number | null;
   unit_pct: number | null;

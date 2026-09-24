@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.deps import current_principal, require
 from app.auth.rbac import Permission, Principal, visible_employee_sql
-from app.models.schemas import MonthStatus
+from app.models.schemas import MonthStatus, Role
 from app.services import dashboards, employees as employee_service, month
 
 router = APIRouter(prefix="/api", tags=["dashboards"])
@@ -61,6 +61,34 @@ def my_dashboard(
     if row is None:
         return _empty_state(principal.employee_id, period)
     row["trend"] = dashboards.daily_trend([principal.employee_id], period)
+    return row
+
+
+def _scope_label(principal: Principal) -> str:
+    """What the consolidated figures cover, in the caller's own terms."""
+    if principal.role in (Role.FINANCE_ADMIN, Role.SUPER_ADMIN):
+        return "Company"
+    if principal.can(Permission.VIEW_BUSINESS):
+        return principal.vertical or "Business"
+    if principal.can(Permission.VIEW_ZONE):
+        return f"{principal.zone} zone" if principal.zone else "Zone"
+    if principal.can(Permission.VIEW_REGION):
+        return f"{principal.region} region" if principal.region else "Region"
+    return "Team"
+
+
+@router.get("/me/consolidated")
+def my_consolidated(
+    period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(require(Permission.VIEW_TEAM)),
+):
+    """The caller and everyone they can see, added up for the period."""
+    row = dashboards.consolidated(principal, period)
+    if row is None:
+        return {**_empty_state(principal.employee_id, period),
+                "scope_label": _scope_label(principal)}
+    row["scope_label"] = _scope_label(principal)
+    row["trend"] = dashboards.scope_trend(principal, period)
     return row
 
 
