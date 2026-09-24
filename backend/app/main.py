@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
-from app.routers import admin, auth, dashboards, exports, sales
+from app.routers import admin, auth, client_errors, dashboards, exports, sales
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
@@ -56,7 +56,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth.router, dashboards.router, sales.router, admin.router, exports.router):
+for r in (auth.router, dashboards.router, sales.router, admin.router, exports.router,
+          client_errors.router):
     app.include_router(r)
 
 

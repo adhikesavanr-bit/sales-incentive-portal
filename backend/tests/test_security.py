@@ -512,3 +512,23 @@ class TestStatementFormatting:
             generated_by="finance@marrowmed.com",
         )
         assert pdf.startswith(b"%PDF")
+
+
+class TestClientErrorReports:
+    def test_a_report_is_logged_with_the_callers_email(self, caplog):
+        import logging
+        from app.routers import client_errors as ce
+        with caplog.at_level(logging.WARNING, logger="client_errors"):
+            ce.report_client_error(
+                ce.ClientError(kind="boundary", message="x is undefined", url="/team"),
+                principal=principal(Role.BDE),
+            )
+        assert "CLIENT_ERROR" in caplog.text
+        assert "nhp001@marrowmed.com" in caplog.text
+        assert "x is undefined" in caplog.text
+
+    def test_oversized_fields_are_rejected(self):
+        from pydantic import ValidationError
+        from app.routers.client_errors import ClientError
+        with pytest.raises(ValidationError):
+            ClientError(message="x" * 1001)

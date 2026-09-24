@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Public_Sans } from "next/font/google";
 
+import { ClientErrorListener } from "@/components/ClientErrorListener";
+
 import "./globals.css";
 
 // One family, used across display and body. Public Sans has real tabular
@@ -19,7 +21,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={publicSans.variable}>
-      <body>{children}</body>
+      <body>
+        <ClientErrorListener />
+        {children}
+      </body>
     </html>
   );
 }
