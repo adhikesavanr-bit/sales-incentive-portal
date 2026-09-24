@@ -22,7 +22,10 @@ const config: Config = {
         deferred: { DEFAULT: "#7A6096", wash: "#EFEAF4" },
       },
       fontFamily: {
-        sans: ["var(--font-public-sans)", "system-ui", "sans-serif"],
+        // Installed fonts only, so nothing is downloaded before text renders.
+        // Calibri where Office is installed (Carlito is its metric-compatible
+        // open twin), Times New Roman everywhere else.
+        sans: ["Calibri", "Carlito", '"Times New Roman"', "Times", "serif"],
       },
       fontSize: {
         // A type scale built on a 1.25 ratio, with a display size reserved

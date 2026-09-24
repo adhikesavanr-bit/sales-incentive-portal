@@ -1,15 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 
 import { AppShell } from "@/components/AppShell";
 import { CouponAnalysis } from "@/components/CouponAnalysis";
@@ -19,6 +11,11 @@ import { PeriodPicker } from "@/components/PeriodPicker";
 import { SlabRuler } from "@/components/SlabRuler";
 import { api, type Breakdown, type Transaction } from "@/lib/api";
 import { count, monthLabel, percent, rupees, rupeesShort } from "@/lib/format";
+
+// recharts is loaded on its own, after the figures render.
+const DailySalesChart = dynamic(() => import("@/components/DailySalesChart"), {
+  ssr: false,
+});
 
 // Mirrors Policy!L12:M16. Displayed only — the amount always comes from the API.
 const BDE_SLABS = [
@@ -131,17 +128,7 @@ export default function DashboardPage() {
             <section className="panel mt-4 p-6">
               <h2 className="text-sm font-semibold">Daily sales</h2>
               <div className="mt-4 h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={data.trend}>
-                    <CartesianGrid stroke="#DDE1E6" vertical={false} />
-                    <XAxis dataKey="day" tick={{ fontSize: 11 }} stroke="#8C95A3"
-                           tickFormatter={(d: string) => d.slice(8)} />
-                    <YAxis tick={{ fontSize: 11 }} stroke="#8C95A3"
-                           tickFormatter={(v: number) => `${v / 1000}k`} />
-                    <Tooltip formatter={(v: number) => rupees(v)} />
-                    <Bar dataKey="qualified_revenue" name="Qualified" fill="#2F7D5E" />
-                  </BarChart>
-                </ResponsiveContainer>
+                <DailySalesChart data={data.trend} />
               </div>
             </section>
           )}

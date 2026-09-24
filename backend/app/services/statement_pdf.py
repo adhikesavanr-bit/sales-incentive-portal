@@ -6,6 +6,11 @@ be tested without BigQuery. Figures are the stored ones from
 
 Amounts are written "Rs" rather than with the rupee sign: the PDF base fonts
 have no glyph for it, and embedding a font for one character is not worth it.
+The statement is set in Times, the base-14 Times New Roman equivalent, so no
+font file ships with the backend.
+
+Only the incentive itself is included: the headline and how it was
+calculated. Coupon analysis and sale-level detail stay on the dashboard.
 """
 from __future__ import annotations
 
@@ -29,8 +34,10 @@ _INK = colors.HexColor("#1F2933")
 _MUTED = colors.HexColor("#5F6B7A")
 _RULE = colors.HexColor("#DDE1E6")
 _WASH = colors.HexColor("#F4F6F8")
-_QUALIFIED = colors.HexColor("#2F7D5E")
-_DISQUALIFIED = colors.HexColor("#B4412F")
+
+# Times New Roman, as the PDF base fonts carry it.
+_FONT = "Times-Roman"
+_BOLD = "Times-Bold"
 
 
 def _num(v: Any) -> float:
@@ -65,12 +72,6 @@ def pct(v: Any, decimals: int = 1) -> str:
     return f"{_num(v) * 100:.{decimals}f}%"
 
 
-def _day(v: Any) -> str:
-    if isinstance(v, (datetime, date)):
-        return v.strftime("%Y-%m-%d")
-    return str(v or "")[:10]
-
-
 def month_label(period: str) -> str:
     y, m = period.split("-")
     return date(int(y), int(m), 1).strftime("%B %Y")
@@ -81,19 +82,17 @@ def build_statement(
     period: str,
     employee: dict,
     breakdown: dict,
-    transactions: list[dict],
     generated_by: str,
 ) -> bytes:
     """Render the statement. `employee` needs employee_id and full_name."""
     styles = getSampleStyleSheet()
-    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=9,
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontName=_FONT, fontSize=9,
                           leading=12, textColor=_INK)
     muted = ParagraphStyle("muted", parent=body, textColor=_MUTED, fontSize=8)
-    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=16,
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontName=_BOLD, fontSize=16,
                         leading=20, textColor=_INK, spaceAfter=2)
-    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=11,
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontName=_BOLD, fontSize=11,
                         leading=14, textColor=_INK, spaceBefore=10, spaceAfter=6)
-    cell = ParagraphStyle("cell", parent=body, fontSize=8, leading=10)
 
     b = breakdown
     story: list = [
@@ -127,8 +126,9 @@ def build_statement(
     headline.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), _WASH),
         ("TEXTCOLOR", (0, 0), (-1, 0), _MUTED),
+        ("FONTNAME", (0, 0), (-1, -1), _FONT),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, 1), _BOLD),
         ("FONTSIZE", (0, 1), (-1, 1), 13),
         ("TOPPADDING", (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
@@ -156,10 +156,11 @@ def build_statement(
         calc.append(("Sub-manager incentive", rupees(b.get("submanager_incentive"))))
     calc_table = Table(calc, colWidths=[110 * mm, 70 * mm])
     calc_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), _FONT),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("TEXTCOLOR", (0, 0), (0, -1), _MUTED),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), _BOLD),
         ("LINEBELOW", (0, 0), (-1, -1), 0.5, _RULE),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
@@ -168,50 +169,11 @@ def build_statement(
     if b.get("arpu_rule_applied"):
         story += [Spacer(1, 4), Paragraph(str(b["arpu_rule_applied"]), muted)]
 
-    qualified = sum(1 for t in transactions if t.get("status") == "QUALIFIED")
-    story.append(Paragraph(
-        f"Sales ({len(transactions)} · {qualified} qualified, "
-        f"{len(transactions) - qualified} disqualified)", h2,
-    ))
-    if transactions:
-        rows = [["Date", "Plan", "College", "Coupon", "Net", "Status"]]
-        for t in transactions:
-            ok = t.get("status") == "QUALIFIED"
-            rows.append([
-                _day(t.get("payment_date_ist")),
-                Paragraph(str(t.get("plan_title") or "—"), cell),
-                Paragraph(str(t.get("college_name") or "—"), cell),
-                Paragraph(str(t.get("coupon") or "—"), cell),
-                rupees(t.get("net_amount")),
-                Paragraph(
-                    "Qualified" if ok
-                    else str(t.get("reason_detail") or "Disqualified"),
-                    ParagraphStyle("st", parent=cell,
-                                   textColor=_QUALIFIED if ok else _DISQUALIFIED),
-                ),
-            ])
-        sales = Table(
-            rows,
-            colWidths=[20 * mm, 35 * mm, 45 * mm, 27 * mm, 22 * mm, 31 * mm],
-            repeatRows=1,
-        )
-        sales.setStyle(TableStyle([
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("BACKGROUND", (0, 0), (-1, 0), _WASH),
-            ("TEXTCOLOR", (0, 0), (-1, 0), _MUTED),
-            ("ALIGN", (4, 0), (4, -1), "RIGHT"),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.5, _RULE),
-        ]))
-        story.append(sales)
-    else:
-        story.append(Paragraph("No sales recorded for this month.", muted))
-
     stamp = datetime.now().strftime("%d %b %Y %H:%M")
 
     def footer(canvas, doc):
         canvas.saveState()
-        canvas.setFont("Helvetica", 7)
+        canvas.setFont(_FONT, 7)
         canvas.setFillColor(_MUTED)
         canvas.drawString(
             15 * mm, 10 * mm,

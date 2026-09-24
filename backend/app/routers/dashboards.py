@@ -61,7 +61,6 @@ def my_dashboard(
     if row is None:
         return _empty_state(principal.employee_id, period)
     row["trend"] = dashboards.daily_trend([principal.employee_id], period)
-    row["plan_mix"] = dashboards.plan_mix([principal.employee_id], period)
     return row
 
 
@@ -95,7 +94,6 @@ def employee_dashboard(
     if row is None:
         return _empty_state(target, period)
     row["trend"] = dashboards.daily_trend([target], period)
-    row["plan_mix"] = dashboards.plan_mix([target], period)
     return row
 
 

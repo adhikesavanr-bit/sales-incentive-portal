@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import threading
+import time
 
 from app.auth.rbac import Principal, visible_employee_sql
 from app.config import get_settings
@@ -125,6 +127,24 @@ def _latest_run(period: str) -> str:
     )
 
 
+# Building the sales SELECT costs two BigQuery round trips before the real
+# query can start: the period's source_table_config row, then the table's
+# INFORMATION_SCHEMA. Both change only when an admin repoints a period, so
+# the SQL is kept for a few minutes. Repointing clears it on this instance;
+# other instances pick the change up when their copy expires.
+_SALES_SQL_TTL_SECONDS = 300
+_sales_sql_cache: dict[str, tuple[float, str]] = {}
+_sales_sql_lock = threading.Lock()
+
+
+def forget_sales_sql(period: str | None = None) -> None:
+    with _sales_sql_lock:
+        if period is None:
+            _sales_sql_cache.clear()
+        else:
+            _sales_sql_cache.pop(period, None)
+
+
 def _sales_sql(period: str) -> str:
     """The period's sales, display columns only, from wherever they live.
 
@@ -133,22 +153,32 @@ def _sales_sql(period: str) -> str:
     the calculation did. If the source cannot be read, the sales still list
     from the qualification rows, just without plan/college detail.
     """
+    with _sales_sql_lock:
+        hit = _sales_sql_cache.get(period)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+
     s = get_settings()
     src = source_tables.resolve(period)
     if src is not None:
         try:
-            return source_tables.display_sql(period, src)
+            sql = source_tables.display_sql(period, src)
         except Exception:  # noqa: BLE001 - degrade to amounts only, never 500
+            # Not cached: the next request tries the source again.
             log.exception("could not read sales detail for %s from %s", period, src.label)
             cols = ", ".join(
                 f"CAST(NULL AS {'TIMESTAMP' if c == 'payment_date_ist' else 'INT64' if c == 'plan_duration_in_month' else 'STRING'}) AS {c}"
                 for c in source_tables.DISPLAY_COLUMNS
             )
             return f"SELECT {cols} FROM UNNEST([1]) WHERE FALSE"
-    return (
-        f"SELECT {', '.join(source_tables.DISPLAY_COLUMNS)} FROM {s.table('raw_sales')} "
-        "WHERE FORMAT_TIMESTAMP('%Y-%m', payment_date_ist, 'Asia/Kolkata') = @p"
-    )
+    else:
+        sql = (
+            f"SELECT {', '.join(source_tables.DISPLAY_COLUMNS)} FROM {s.table('raw_sales')} "
+            "WHERE FORMAT_TIMESTAMP('%Y-%m', payment_date_ist, 'Asia/Kolkata') = @p"
+        )
+    with _sales_sql_lock:
+        _sales_sql_cache[period] = (time.monotonic() + _SALES_SQL_TTL_SECONDS, sql)
+    return sql
 
 
 def _with(period: str) -> str:

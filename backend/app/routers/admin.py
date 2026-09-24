@@ -15,6 +15,7 @@ from app.models.schemas import Employee, MonthStatus, Role
 from app.services import (
     audit,
     coupon_rules,
+    dashboards,
     employees as employee_service,
     incentive_run,
     month,
@@ -536,6 +537,7 @@ def set_source(
         body.period, body.dataset, body.table, principal.email,
         body.project, body.date_column, body.column_map or mapping,
     )
+    dashboards.forget_sales_sql(body.period)
     audit.record(
         principal.email, "SOURCE_TABLE_CHANGE", entity_type="period",
         affected_record=body.period,

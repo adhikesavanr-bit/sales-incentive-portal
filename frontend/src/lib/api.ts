@@ -149,6 +149,18 @@ async function download(path: string, fallbackName: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Every page mounts its own AppShell, which needs the signed-in account. It is
+// fetched once per session token rather than on every navigation; signing
+// out, or starting or ending view-as, changes the token and so refetches.
+type MeCache = { token: string; value: Promise<Me>; resolved?: Me };
+let meCache: MeCache | null = null;
+
+/** The account already loaded for the current token, if any. */
+export function cachedMe(): Me | null {
+  const entry = meCache;
+  return entry && entry.token === (getToken() ?? "") ? entry.resolved ?? null : null;
+}
+
 export const api = {
   login: (idToken: string) =>
     request<{ access_token: string; expires_in: number }>("/api/auth/login", {
@@ -166,7 +178,19 @@ export const api = {
       method: "POST",
     }),
 
-  me: () => request<Me>("/api/auth/me"),
+  me: (): Promise<Me> => {
+    const token = getToken() ?? "";
+    if (meCache?.token !== token) {
+      const value = request<Me>("/api/auth/me");
+      const entry: MeCache = { token, value };
+      meCache = entry;
+      value.then(
+        (me) => { entry.resolved = me; },
+        () => { if (meCache === entry) meCache = null; },
+      );
+    }
+    return meCache!.value;
+  },
 
   myDashboard: (period: string) =>
     request<Breakdown>(`/api/me/dashboard?period=${period}`),

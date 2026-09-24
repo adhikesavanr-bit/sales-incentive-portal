@@ -56,7 +56,6 @@ def export_statement(
         period=period,
         employee=emp.model_dump() if emp else {"employee_id": target},
         breakdown=row,
-        transactions=dashboards.transactions(target, period, limit=5000),
         generated_by=principal.email,
     )
     audit.record(

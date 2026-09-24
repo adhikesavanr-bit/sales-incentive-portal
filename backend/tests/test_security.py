@@ -508,7 +508,6 @@ class TestStatementFormatting:
             period="2026-08",
             employee={"employee_id": "NHP001", "full_name": "A BDE"},
             breakdown={"total_incentive": Decimal("24750.01"), "bde_rate": Decimal("0.0225")},
-            transactions=[],
             generated_by="finance@marrowmed.com",
         )
         assert pdf.startswith(b"%PDF")
@@ -560,6 +559,7 @@ class TestDashboardSaleQueries:
 
     def _capture(self, monkeypatch, src=None):
         from app.services import dashboards
+        dashboards.forget_sales_sql()
         seen = {}
         monkeypatch.setattr(dashboards.source_tables, "resolve", lambda p: src)
         monkeypatch.setattr(dashboards.bq, "query",
@@ -590,6 +590,17 @@ class TestDashboardSaleQueries:
         d, seen = self._capture(monkeypatch, None)
         d.plan_mix(["NHP001"], "2026-08")
         assert "raw_sales" in seen["sql"]
+
+    def test_the_sales_select_is_built_once_per_period(self, monkeypatch):
+        d, seen = self._capture(monkeypatch, None)
+        calls = []
+        monkeypatch.setattr(d.source_tables, "resolve", lambda p: calls.append(p))
+        d.transactions("NHP001", "2026-08")
+        d.daily_trend(["NHP001"], "2026-08")
+        assert calls == ["2026-08"]
+        d.forget_sales_sql("2026-08")
+        d.transactions("NHP001", "2026-08")
+        assert calls == ["2026-08", "2026-08"]
 
     def test_coupon_analysis_reads_the_latest_run_for_that_person(self, monkeypatch):
         d, seen = self._capture(monkeypatch)

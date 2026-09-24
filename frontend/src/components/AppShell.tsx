@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { api, clearToken, endViewAs, getToken, type Me } from "@/lib/api";
+import { api, cachedMe, clearToken, endViewAs, getToken, type Me } from "@/lib/api";
 
 const NAV = [
   { href: "/dashboard", label: "My performance", needs: null },
@@ -18,7 +18,8 @@ const NAV = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [me, setMe] = useState<Me | null>(null);
+  // Seeded from the cache so moving between pages does not flash "Loading".
+  const [me, setMe] = useState<Me | null>(() => cachedMe());
 
   useEffect(() => {
     if (!getToken()) {
