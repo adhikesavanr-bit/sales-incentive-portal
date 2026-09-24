@@ -280,7 +280,7 @@ def set_for_period(
         "WHERE period = @p AND is_active",
         {"p": period},
     )
-    bq.insert_rows("source_table_config", [{
+    bq.append_rows("source_table_config", [{
         "period": period,
         "source_project": project or s.gcp_project_id,
         "source_dataset": dataset,

@@ -127,7 +127,7 @@ def seed_rules(effective_from: date = date(2026, 4, 1)) -> None:
                 "created_by": "seed",
                 "created_at": now,
             })
-    bq.insert_rows("incentive_rules", rows)
+    bq.append_rows("incentive_rules", rows)
     print(f"seeded {len(rows)} incentive rule rows")
 
     from app.services import coupon_rules

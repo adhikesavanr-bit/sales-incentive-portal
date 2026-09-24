@@ -320,7 +320,7 @@ class TestJsonColumns:
         captured = {}
         monkeypatch.setattr(source_tables.bq, "query", lambda *a, **k: [])
         monkeypatch.setattr(
-            source_tables.bq, "insert_rows",
+            source_tables.bq, "append_rows",
             lambda table, rows: captured.update(table=table, rows=rows),
         )
         source_tables.set_for_period(
@@ -337,7 +337,7 @@ class TestJsonColumns:
         captured = {}
         monkeypatch.setattr(source_tables.bq, "query", lambda *a, **k: [])
         monkeypatch.setattr(
-            source_tables.bq, "insert_rows",
+            source_tables.bq, "append_rows",
             lambda table, rows: captured.update(rows=rows),
         )
         source_tables.set_for_period(

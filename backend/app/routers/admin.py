@@ -211,7 +211,7 @@ def upsert_target(
     winner = body.winner_units if body.winner_units is not None else body.target_units * 1.3
     now = datetime.now(timezone.utc).isoformat()
 
-    bq.insert_rows("targets", [{
+    bq.append_rows("targets", [{
         "employee_id": body.employee_id,
         "period": body.period,
         "vertical": "Marrow",
@@ -275,7 +275,7 @@ def create_rule(
     rule["rule_id"] = str(uuid.uuid4())
     rule["created_by"] = principal.email
     rule["created_at"] = datetime.now(timezone.utc).isoformat()
-    bq.insert_rows("incentive_rules", [rule])
+    bq.append_rows("incentive_rules", [rule])
     audit.record(
         principal.email, "RULE_CREATE", entity_type="incentive_rule",
         affected_record=rule["rule_id"], new_value=rule, reason=reason,
@@ -426,7 +426,7 @@ def update_slab(
         "WHERE scope = @s AND threshold = @t AND effective_from = DATE(@eff)",
         {"s": body.scope, "t": body.threshold, "eff": eff},
     )
-    bq.insert_rows("incentive_rules", [{
+    bq.append_rows("incentive_rules", [{
         "rule_id": str(uuid.uuid4()),
         "scope": body.scope,
         "vertical": "Marrow",

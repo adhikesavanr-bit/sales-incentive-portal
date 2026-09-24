@@ -101,7 +101,7 @@ def upsert(employee: Employee, updated_by: str) -> None:
         "WHERE employee_id = @id AND effective_to IS NULL",
         {"id": employee.employee_id},
     )
-    bq.insert_rows("employee_master", [{
+    bq.append_rows("employee_master", [{
         "employee_id": employee.employee_id,
         "full_name": employee.full_name,
         "initial": employee.initial,
@@ -129,7 +129,7 @@ def set_hierarchy(employee: Employee, updated_by: str) -> None:
         "WHERE employee_id = @id AND effective_to IS NULL",
         {"id": employee.employee_id},
     )
-    bq.insert_rows("reporting_hierarchy", [{
+    bq.append_rows("reporting_hierarchy", [{
         "employee_id": employee.employee_id,
         "submanager_id": employee.submanager_id,
         "rm_id": employee.rm_id,

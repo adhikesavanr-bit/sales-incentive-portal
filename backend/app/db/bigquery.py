@@ -9,6 +9,7 @@ Every query is parameterised. No user input is ever formatted into SQL text.
 """
 from __future__ import annotations
 
+import json
 import logging
 from functools import lru_cache
 from typing import Any, Iterable, Sequence
@@ -79,7 +80,13 @@ def query(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
 
 
 def insert_rows(table: str, rows: Sequence[dict]) -> None:
-    """Streaming insert. Used for audit and small control tables."""
+    """Streaming insert. ONLY for append-only tables (audit_log, month_status,
+    upload_batches).
+
+    Streamed rows sit in a buffer for up to ~90 minutes, and BigQuery rejects
+    any UPDATE or DELETE that touches them. A table whose rows are later
+    closed or edited must use `append_rows` instead.
+    """
     if not rows:
         return
     s = get_settings()
@@ -87,6 +94,41 @@ def insert_rows(table: str, rows: Sequence[dict]) -> None:
     errors = get_client().insert_rows_json(table_id, fit_rows(rows))
     if errors:
         raise RuntimeError(f"BigQuery insert into {table} failed: {errors}")
+
+
+def append_rows(table: str, rows: Sequence[dict]) -> None:
+    """Append a few rows with a load job, so they can be updated immediately.
+
+    For small tables that are edited in place — employee_master, targets,
+    rules. Unlike a streaming insert, a load job leaves nothing in the
+    streaming buffer, so the next UPDATE or DELETE on these rows works at
+    once. The table's own schema is passed explicitly: auto-detection would
+    guess types from a single row and can disagree with the table.
+    """
+    if not rows:
+        return
+    s = get_settings()
+    table_id = f"{s.gcp_project_id}.{s.bq_dataset}.{table}"
+    client = get_client()
+    schema = client.get_table(table_id).schema
+    # Callers pass JSON columns as json.dumps() strings, which a streaming
+    # insert parses but a load job stores as a JSON *string*. Decode them so
+    # the column holds the object, exactly as it did before. A None is left
+    # out entirely: sent explicitly it would load as JSON null, not SQL NULL.
+    json_cols = {f.name for f in schema if f.field_type == "JSON"}
+    rows = [
+        {k: json.loads(v) if k in json_cols and isinstance(v, str) else v
+         for k, v in r.items() if not (k in json_cols and v is None)}
+        for r in rows
+    ]
+    job = client.load_table_from_json(
+        fit_rows(rows),
+        table_id,
+        job_config=bigquery.LoadJobConfig(
+            write_disposition="WRITE_APPEND", schema=schema,
+        ),
+    )
+    job.result()
 
 
 def load_rows(table: str, rows: Iterable[dict], write_disposition: str = "WRITE_APPEND") -> int:

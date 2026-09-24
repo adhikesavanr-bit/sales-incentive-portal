@@ -130,7 +130,7 @@ def update(
         {"g": group_size, "eff": eff},
     )
 
-    bq.insert_rows("coupon_rules", [{
+    bq.append_rows("coupon_rules", [{
         "rule_id": str(uuid.uuid4()),
         "group_size": group_size,
         "required_sales": required_sales,
@@ -176,5 +176,5 @@ def ensure_seeded(updated_by: str = "seed") -> int:
         "updated_by": updated_by,
         "updated_at": now,
     } for r in seed_rules()]
-    bq.insert_rows("coupon_rules", payload)
+    bq.append_rows("coupon_rules", payload)
     return len(payload)
