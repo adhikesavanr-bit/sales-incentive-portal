@@ -209,15 +209,9 @@ def _select_list(mapping: dict[str, str]) -> str:
     return ",\n               ".join(parts)
 
 
-def load_transactions(period: str, src: SourceTable) -> list[SalesTransaction]:
-    """Read one month straight from the source table.
-
-    The date filter is on the partitioning column, so this scans one month even
-    when the table holds more. Column names are aliased in SQL rather than
-    renamed in Python, so a wide table never crosses the network in full.
-    """
+def resolved_mapping(src: SourceTable, period: str) -> tuple[dict[str, str], dict[str, str]]:
+    """The canonical -> actual column mapping, and the table's column types."""
     schema = {c["column_name"]: c["data_type"] for c in describe(src)}
-
     mapping = src.column_map
     if not mapping:
         mapping, missing = map_columns(list(schema))
@@ -226,7 +220,48 @@ def load_transactions(period: str, src: SourceTable) -> list[SalesTransaction]:
                 f"{src.label} has no column matching: {', '.join(missing)}. "
                 f"Set an explicit column_map for {period} if the names differ."
             )
+    return mapping, schema
 
+
+# What the dashboards show for each sale. Kept narrow: these tables are wide.
+DISPLAY_COLUMNS = (
+    "payment_id", "payment_date_ist", "invoice_id", "plan_title",
+    "plan_duration_in_month", "college_id", "college_name", "coupon",
+)
+
+
+def display_sql(period: str, src: SourceTable) -> str:
+    """SELECT one month of sales from the source table, display columns only,
+    with canonical names and join-safe types. Takes the @p parameter."""
+    mapping, schema = resolved_mapping(src, period)
+    parts = []
+    for canonical in DISPLAY_COLUMNS:
+        actual = mapping.get(canonical)
+        if not actual:
+            kind = "INT64" if canonical == "plan_duration_in_month" else "STRING"
+            kind = "TIMESTAMP" if canonical == "payment_date_ist" else kind
+            parts.append(f"CAST(NULL AS {kind}) AS {canonical}")
+        elif canonical == "payment_date_ist" and schema.get(actual, "").upper() != "TIMESTAMP":
+            parts.append(f"TIMESTAMP(`{actual}`) AS {canonical}")
+        elif canonical in ("payment_id", "college_id"):
+            parts.append(f"CAST(`{actual}` AS STRING) AS {canonical}")
+        else:
+            parts.append(f"`{actual}` AS {canonical}")
+    date_col = mapping.get("payment_date_ist", src.date_column)
+    return (
+        f"SELECT {', '.join(parts)} FROM {src.ref} "
+        f"WHERE {period_predicate(date_col, schema.get(date_col))}"
+    )
+
+
+def load_transactions(period: str, src: SourceTable) -> list[SalesTransaction]:
+    """Read one month straight from the source table.
+
+    The date filter is on the partitioning column, so this scans one month even
+    when the table holds more. Column names are aliased in SQL rather than
+    renamed in Python, so a wide table never crosses the network in full.
+    """
+    mapping, schema = resolved_mapping(src, period)
     date_col = mapping.get("payment_date_ist", src.date_column)
     rows = bq.query(
         f"""

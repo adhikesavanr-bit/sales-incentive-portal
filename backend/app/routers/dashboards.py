@@ -75,6 +75,15 @@ def my_sales(
     return dashboards.transactions(principal.employee_id, period, limit, offset)
 
 
+@router.get("/me/coupons")
+def my_coupons(
+    period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(current_principal),
+):
+    """Each of my coupons for the month and whether it qualified."""
+    return dashboards.coupon_analysis(principal.employee_id, period)
+
+
 @router.get("/employees/{employee_id}/dashboard")
 def employee_dashboard(
     employee_id: str,
@@ -100,6 +109,16 @@ def employee_sales(
 ):
     target = _authorise_target(principal, employee_id)
     return dashboards.transactions(target, period, limit, offset)
+
+
+@router.get("/employees/{employee_id}/coupons")
+def employee_coupons(
+    employee_id: str,
+    period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(current_principal),
+):
+    target = _authorise_target(principal, employee_id)
+    return dashboards.coupon_analysis(target, period)
 
 
 @router.get("/rollup/dashboard")

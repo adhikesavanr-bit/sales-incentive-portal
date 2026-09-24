@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { CouponAnalysis } from "@/components/CouponAnalysis";
 import { DownloadButton } from "@/components/DownloadButton";
 import { api, type Breakdown, type Transaction } from "@/lib/api";
 import { count, monthLabel, percent, rupees } from "@/lib/format";
@@ -74,6 +75,10 @@ export default function EmployeeDetailPage() {
             <Row term="Payable this month" value={rupees(data.net_payable)} />
           </dl>
           <p className="mt-3 text-sm text-ink-muted">{data.arpu_rule_applied}</p>
+          <CouponAnalysis
+            period={period}
+            load={() => api.employeeCoupons(employeeId, period)}
+          />
         </>
       )}
 

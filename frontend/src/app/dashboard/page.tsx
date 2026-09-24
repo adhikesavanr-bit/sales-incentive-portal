@@ -12,6 +12,7 @@ import {
 } from "recharts";
 
 import { AppShell } from "@/components/AppShell";
+import { CouponAnalysis } from "@/components/CouponAnalysis";
 import { DownloadButton } from "@/components/DownloadButton";
 import { PayoutHeadline } from "@/components/PayoutHeadline";
 import { PeriodPicker } from "@/components/PeriodPicker";
@@ -144,6 +145,8 @@ export default function DashboardPage() {
               </div>
             </section>
           )}
+
+          <CouponAnalysis period={period} load={() => api.myCoupons(period)} />
 
           <section className="panel mt-4 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-rule p-4">

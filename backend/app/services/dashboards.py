@@ -1,9 +1,14 @@
-"""Dashboard reads. Always from the aggregated view, never from raw_sales."""
+"""Dashboard reads: the aggregated view for figures, the source table for sale detail."""
 from __future__ import annotations
+
+import logging
 
 from app.auth.rbac import Principal, visible_employee_sql
 from app.config import get_settings
 from app.db import bigquery as bq
+from app.services import source_tables
+
+log = logging.getLogger(__name__)
 
 # Every column here must be table-qualified: employee_id, is_active, region,
 # zone and designation all exist on BOTH v_employee_hierarchy and
@@ -105,17 +110,61 @@ def group_by(principal: Principal, period: str, dimension: str) -> list[dict]:
     )
 
 
-def daily_trend(employee_ids: list[str], period: str) -> list[dict]:
+def _latest_run(period: str) -> str:
+    """The period's current qualification rows.
+
+    Every recalculation appends a full copy, so reading the table unfiltered
+    counts each sale once per run. Only the latest version is current, which
+    is also the version `v_incentive_current` shows.
+    """
     s = get_settings()
+    t = s.table("transaction_qualification")
+    return (
+        f"SELECT * FROM {t} WHERE period = @p AND calculation_version = "
+        f"(SELECT MAX(calculation_version) FROM {t} WHERE period = @p)"
+    )
+
+
+def _sales_sql(period: str) -> str:
+    """The period's sales, display columns only, from wherever they live.
+
+    Most months are read straight from a configured source table rather than
+    uploaded into raw_sales, so the dashboards must read from the same place
+    the calculation did. If the source cannot be read, the sales still list
+    from the qualification rows, just without plan/college detail.
+    """
+    s = get_settings()
+    src = source_tables.resolve(period)
+    if src is not None:
+        try:
+            return source_tables.display_sql(period, src)
+        except Exception:  # noqa: BLE001 - degrade to amounts only, never 500
+            log.exception("could not read sales detail for %s from %s", period, src.label)
+            cols = ", ".join(
+                f"CAST(NULL AS {'TIMESTAMP' if c == 'payment_date_ist' else 'INT64' if c == 'plan_duration_in_month' else 'STRING'}) AS {c}"
+                for c in source_tables.DISPLAY_COLUMNS
+            )
+            return f"SELECT {cols} FROM UNNEST([1]) WHERE FALSE"
+    return (
+        f"SELECT {', '.join(source_tables.DISPLAY_COLUMNS)} FROM {s.table('raw_sales')} "
+        "WHERE FORMAT_TIMESTAMP('%Y-%m', payment_date_ist, 'Asia/Kolkata') = @p"
+    )
+
+
+def _with(period: str) -> str:
+    return f"WITH q AS ({_latest_run(period)}), sales AS ({_sales_sql(period)})"
+
+
+def daily_trend(employee_ids: list[str], period: str) -> list[dict]:
     return bq.query(
         f"""
+        {_with(period)}
         SELECT DATE(r.payment_date_ist, 'Asia/Kolkata') AS day,
                COUNT(*) AS units,
-               SUM(r.net_amount) AS net_revenue,
-               SUM(CASE WHEN q.status = 'QUALIFIED' THEN r.net_amount ELSE 0 END) AS qualified_revenue
-        FROM {s.table('raw_sales')} r
-        JOIN {s.table('transaction_qualification')} q USING (payment_id)
-        WHERE q.period = @p AND q.employee_id IN UNNEST(@ids)
+               SUM(q.net_amount) AS net_revenue,
+               SUM(CASE WHEN q.status = 'QUALIFIED' THEN q.net_amount ELSE 0 END) AS qualified_revenue
+        FROM q JOIN sales r ON r.payment_id = q.payment_id
+        WHERE q.employee_id IN UNNEST(@ids)
         GROUP BY day ORDER BY day
         """,
         {"p": period, "ids": employee_ids},
@@ -123,14 +172,13 @@ def daily_trend(employee_ids: list[str], period: str) -> list[dict]:
 
 
 def plan_mix(employee_ids: list[str], period: str) -> list[dict]:
-    s = get_settings()
     return bq.query(
         f"""
+        {_with(period)}
         SELECT r.plan_title, r.plan_duration_in_month,
-               COUNT(*) AS units, SUM(r.net_amount) AS net_revenue
-        FROM {s.table('raw_sales')} r
-        JOIN {s.table('transaction_qualification')} q USING (payment_id)
-        WHERE q.period = @p AND q.employee_id IN UNNEST(@ids)
+               COUNT(*) AS units, SUM(q.net_amount) AS net_revenue
+        FROM q JOIN sales r ON r.payment_id = q.payment_id
+        WHERE q.employee_id IN UNNEST(@ids)
         GROUP BY r.plan_title, r.plan_duration_in_month
         ORDER BY net_revenue DESC
         """,
@@ -139,18 +187,58 @@ def plan_mix(employee_ids: list[str], period: str) -> list[dict]:
 
 
 def transactions(employee_id: str, period: str, limit: int = 200, offset: int = 0) -> list[dict]:
-    s = get_settings()
+    """One person's sales for the period, with each sale's verdict.
+
+    Starts from the qualification rows, so every counted sale is listed even
+    when its detail row is missing from the source.
+    """
     return bq.query(
         f"""
-        SELECT r.payment_date_ist, r.payment_id, r.invoice_id, r.plan_title,
-               r.plan_duration_in_month, r.college_name, r.coupon,
-               r.paid_amount, r.net_amount,
+        {_with(period)}
+        SELECT r.payment_date_ist, q.payment_id, r.invoice_id, r.plan_title,
+               r.plan_duration_in_month, r.college_id, r.college_name, r.coupon,
+               q.paid_amount, q.net_amount,
                q.status, q.disqualification_reason, q.reason_detail
-        FROM {s.table('raw_sales')} r
-        JOIN {s.table('transaction_qualification')} q USING (payment_id)
-        WHERE q.period = @p AND q.employee_id = @id
+        FROM q LEFT JOIN sales r ON r.payment_id = q.payment_id
+        WHERE q.employee_id = @id
         ORDER BY r.payment_date_ist DESC
         LIMIT @lim OFFSET @off
         """,
         {"p": period, "id": employee_id, "lim": limit, "off": offset},
+    )
+
+
+def coupon_analysis(employee_id: str, period: str) -> list[dict]:
+    """Each coupon's verdict for the month: the "Coupon Analysis" block of the
+    per-person workbook (college, coupon, group size, total, qualified).
+
+    Reads the latest run only; every recalculation appends a new copy, and all
+    rows of one run share its calculated_at.
+    """
+    s = get_settings()
+    sq = s.table("signature_qualification")
+    return bq.query(
+        f"""
+        WITH latest AS (
+          SELECT * FROM {sq}
+          WHERE period = @p
+            AND calculated_at = (SELECT MAX(calculated_at) FROM {sq} WHERE period = @p)
+        ),
+        master AS (
+          SELECT coupon_signature, ANY_VALUE(college_id) AS college_id,
+                 ANY_VALUE(group_size) AS group_size,
+                 ANY_VALUE(required_sales) AS required_sales,
+                 ANY_VALUE(activation_date) AS activation_date
+          FROM {s.table('coupon_master')} GROUP BY coupon_signature
+        )
+        SELECT l.coupon_signature, l.coupon_code, m.college_id, m.group_size,
+               m.required_sales, m.activation_date,
+               l.total, l.club_sales, l.min_sales, l.min_own_sales,
+               l.is_foundation, l.qualification_3 AS qualified,
+               l.overridden, l.override_reason
+        FROM latest l LEFT JOIN master m USING (coupon_signature)
+        WHERE l.employee_id = @id AND l.total > 0
+        ORDER BY l.qualification_3, m.college_id, l.coupon_code
+        """,
+        {"p": period, "id": employee_id},
     )

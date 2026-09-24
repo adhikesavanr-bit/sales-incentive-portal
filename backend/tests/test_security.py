@@ -553,3 +553,54 @@ class TestAssignableRoles:
     def test_team_admin_cannot_hand_out_company_wide_roles(self):
         v = self._values(Role.TEAM_ADMIN)
         assert not v & {"BUSINESS_HEAD", "FINANCE_ADMIN", "SUPER_ADMIN"}
+
+
+class TestDashboardSaleQueries:
+    """Sale detail comes from where the calculation read it, latest run only."""
+
+    def _capture(self, monkeypatch, src=None):
+        from app.services import dashboards
+        seen = {}
+        monkeypatch.setattr(dashboards.source_tables, "resolve", lambda p: src)
+        monkeypatch.setattr(dashboards.bq, "query",
+                            lambda sql, params=None: seen.update(sql=sql, params=params) or [])
+        return dashboards, seen
+
+    def test_only_the_latest_calculation_is_read(self, monkeypatch):
+        d, seen = self._capture(monkeypatch)
+        d.transactions("NHP001", "2026-08")
+        assert "MAX(calculation_version)" in seen["sql"]
+
+    def test_sales_come_from_the_configured_source_table(self, monkeypatch):
+        from app.services.source_tables import SourceTable
+        src = SourceTable(project="p", dataset="Monthly_Sub", table="Aug_2026_v1",
+                          column_map={"payment_id": "payment_id", "payment_date_ist": "payment_date_ist",
+                                      "plan_title": "Plan_Title"})
+        d, seen = self._capture(monkeypatch, src)
+        monkeypatch.setattr(d.source_tables, "describe", lambda s: [
+            {"column_name": "payment_id", "data_type": "STRING"},
+            {"column_name": "payment_date_ist", "data_type": "TIMESTAMP"},
+            {"column_name": "Plan_Title", "data_type": "STRING"}])
+        d.transactions("NHP001", "2026-08")
+        assert "`p.Monthly_Sub.Aug_2026_v1`" in seen["sql"]
+        assert "raw_sales" not in seen["sql"]
+        assert "`Plan_Title` AS plan_title" in seen["sql"]
+
+    def test_uploaded_raw_sales_is_the_fallback(self, monkeypatch):
+        d, seen = self._capture(monkeypatch, None)
+        d.plan_mix(["NHP001"], "2026-08")
+        assert "raw_sales" in seen["sql"]
+
+    def test_coupon_analysis_reads_the_latest_run_for_that_person(self, monkeypatch):
+        d, seen = self._capture(monkeypatch)
+        d.coupon_analysis("NHP157", "2026-08")
+        assert "MAX(calculated_at)" in seen["sql"]
+        assert seen["params"] == {"p": "2026-08", "id": "NHP157"}
+
+    def test_coupons_of_someone_out_of_scope_are_a_404(self, monkeypatch):
+        from fastapi import HTTPException
+        from app.routers import dashboards as router
+        monkeypatch.setattr(router.employee_service, "is_in_scope", lambda *a: False)
+        with pytest.raises(HTTPException) as e:
+            router.employee_coupons("NHP999", period="2026-08", principal=principal(Role.BDE))
+        assert e.value.status_code == 404

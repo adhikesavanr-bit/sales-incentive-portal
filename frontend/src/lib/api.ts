@@ -171,7 +171,8 @@ export const api = {
   myDashboard: (period: string) =>
     request<Breakdown>(`/api/me/dashboard?period=${period}`),
 
-  mySales: (period: string, limit = 200, offset = 0) =>
+  // 1000 is the API's ceiling; a month's sales for one person fit well within it.
+  mySales: (period: string, limit = 1000, offset = 0) =>
     request<Transaction[]>(
       `/api/me/sales?period=${period}&limit=${limit}&offset=${offset}`,
     ),
@@ -180,7 +181,13 @@ export const api = {
     request<Breakdown>(`/api/employees/${id}/dashboard?period=${period}`),
 
   employeeSales: (id: string, period: string) =>
-    request<Transaction[]>(`/api/employees/${id}/sales?period=${period}`),
+    request<Transaction[]>(`/api/employees/${id}/sales?period=${period}&limit=1000`),
+
+  myCoupons: (period: string) =>
+    request<CouponVerdict[]>(`/api/me/coupons?period=${period}`),
+
+  employeeCoupons: (id: string, period: string) =>
+    request<CouponVerdict[]>(`/api/employees/${id}/coupons?period=${period}`),
 
   rollup: (period: string, groupBy?: string) =>
     request<Rollup>(
@@ -349,6 +356,24 @@ export interface Breakdown {
   is_active: boolean;
   trend?: { day: string; units: number; net_revenue: number; qualified_revenue: number }[];
   plan_mix?: { plan_title: string; units: number; net_revenue: number }[];
+}
+
+/** One coupon's verdict for a month: the workbook's "Coupon Analysis" block. */
+export interface CouponVerdict {
+  coupon_signature: string;
+  coupon_code: string;
+  college_id: string | null;
+  group_size: string | null;
+  required_sales: number | null;
+  activation_date: string | null;
+  total: number;
+  club_sales: number | null;
+  min_sales: number | null;
+  min_own_sales: number | null;
+  is_foundation: boolean | null;
+  qualified: boolean;
+  overridden: boolean | null;
+  override_reason: string | null;
 }
 
 export interface Transaction {
