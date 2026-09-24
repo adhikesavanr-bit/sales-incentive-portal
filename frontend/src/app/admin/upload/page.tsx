@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { DownloadButton } from "@/components/DownloadButton";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type MonthStatus, type RecalcResult, type UploadSummary } from "@/lib/api";
 import { count, monthLabel, rupeesShort } from "@/lib/format";
@@ -157,12 +158,14 @@ export default function UploadPage() {
                   </li>
                 ))}
               </ul>
-              <a
-                href={`/api/sales/validate/${summary.batch_id}/errors.csv`}
-                className="mt-3 inline-block text-sm underline"
-              >
-                Download the full error list
-              </a>
+              <div className="mt-3">
+                <DownloadButton
+                  onDownload={() => api.downloadUploadErrors(summary.batch_id)}
+                  className="text-sm underline"
+                >
+                  Download the full error list
+                </DownloadButton>
+              </div>
             </div>
           )}
 

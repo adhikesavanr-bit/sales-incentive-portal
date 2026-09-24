@@ -55,6 +55,43 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
+/**
+ * Download a file from the API. A plain <a href> cannot be used: the browser
+ * navigates without the Authorization header, and the API answers 401. So the
+ * file is fetched with the token and handed to the browser as a blob.
+ */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = "/login";
+    throw new ApiError(401, "Your session expired. Sign in again.");
+  }
+  if (!res.ok) {
+    let detail = `Download failed (${res.status}).`;
+    try {
+      detail = (await res.json()).detail ?? detail;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(res.status, detail);
+  }
+  const name =
+    /filename="?([^";]+)"?/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ??
+    fallbackName;
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export const api = {
   login: (idToken: string) =>
     request<{ access_token: string; expires_in: number }>("/api/auth/login", {
@@ -193,8 +230,19 @@ export const api = {
 
   audit: (limit = 200) => request<AuditRow[]>(`/api/audit?limit=${limit}`),
 
-  exportUrl: (report: string, period: string) =>
-    `/api/export/${report}?period=${period}`,
+  exportCsv: (report: string, period: string) =>
+    download(`/api/export/${report}?period=${period}`, `${report}-${period}.csv`),
+
+  /** One person's statement. Omit employeeId for the caller's own. */
+  exportStatementPdf: (period: string, employeeId?: string) =>
+    download(
+      `/api/export/statement?period=${period}` +
+        (employeeId ? `&employee_id=${encodeURIComponent(employeeId)}` : ""),
+      `incentive-${employeeId ?? "me"}-${period}.pdf`,
+    ),
+
+  downloadUploadErrors: (batchId: string) =>
+    download(`/api/sales/validate/${batchId}/errors.csv`, `${batchId}-errors.csv`),
 };
 
 // --- types ----------------------------------------------------------------

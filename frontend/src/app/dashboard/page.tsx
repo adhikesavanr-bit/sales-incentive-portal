@@ -12,6 +12,7 @@ import {
 } from "recharts";
 
 import { AppShell } from "@/components/AppShell";
+import { DownloadButton } from "@/components/DownloadButton";
 import { PayoutHeadline } from "@/components/PayoutHeadline";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { SlabRuler } from "@/components/SlabRuler";
@@ -56,7 +57,14 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">My performance</h1>
           <p className="text-sm text-ink-muted">{monthLabel(period)}</p>
         </div>
-        <PeriodPicker value={period} onChange={setPeriod} />
+        <div className="flex items-start gap-2">
+          <PeriodPicker value={period} onChange={setPeriod} />
+          {data && !data.status && (
+            <DownloadButton onDownload={() => api.exportStatementPdf(period)}>
+              Export PDF
+            </DownloadButton>
+          )}
+        </div>
       </header>
 
       {error && (

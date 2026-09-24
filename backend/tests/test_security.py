@@ -426,3 +426,89 @@ class TestTeamAdminRole:
         e.is_active, e.exit_date = False, date(2026, 10, 15)
         assert e.employee_id == "NHP001"
         assert e.exit_date == date(2026, 10, 15)
+
+
+class TestStatementExport:
+    """The PDF statement is scoped exactly like the dashboard it prints."""
+
+    ROW = {
+        "employee_id": "NHP001", "period": "2026-08", "designation": "BDE",
+        "region": "R1", "target_units": 30, "gross_units": 37,
+        "achieved_units": 35, "target_revenue": 990000,
+        "qualified_revenue": 1100000.5, "disqualified_revenue": 76069.84,
+        "revenue_pct": 1.111, "unit_pct": 1.1667, "arpu": 31785.68,
+        "base_pct": 1.111, "bde_rate": 0.0225, "bde_incentive": 24750.01,
+        "total_incentive": 24750.01, "net_payable": 24750.01, "accumulation": 0,
+        "arpu_rule_applied": "ARPU 31,786 < 33,000 -> revenue achievement only",
+    }
+    TXNS = [
+        {"payment_date_ist": "2026-08-10T12:00:00", "plan_title": "Marrow 3M",
+         "college_name": "AIIMS Delhi", "coupon": "ABB10", "net_amount": 30507.6,
+         "status": "QUALIFIED", "reason_detail": None},
+        {"payment_date_ist": "2026-08-11T12:00:00", "plan_title": "Marrow 12M",
+         "college_name": "MMC Chennai", "coupon": "ABB11", "net_amount": 30507.6,
+         "status": "DISQUALIFIED", "reason_detail": "Coupon under-utilised"},
+    ]
+
+    def _wire(self, monkeypatch, *, in_scope=True, row=ROW):
+        from app.routers import dashboards as dash_router
+        from app.routers import exports
+        monkeypatch.setattr(exports.dashboards, "own", lambda e, p: row and dict(row, employee_id=e))
+        monkeypatch.setattr(exports.dashboards, "transactions", lambda e, p, limit=200: self.TXNS)
+        monkeypatch.setattr(exports.employee_service, "get_by_id", lambda e: None)
+        monkeypatch.setattr(exports.audit, "record", lambda *a, **k: None)
+        monkeypatch.setattr(dash_router.employee_service, "is_in_scope",
+                            lambda t, s, p: in_scope)
+        return exports
+
+    def test_a_bde_gets_their_own_statement(self, monkeypatch):
+        exports = self._wire(monkeypatch)
+        r = exports.export_statement(period="2026-08", employee_id=None,
+                                     principal=principal(Role.BDE))
+        assert r.media_type == "application/pdf"
+        assert r.body.startswith(b"%PDF")
+        assert "incentive-NHP001-2026-08.pdf" in r.headers["content-disposition"]
+
+    def test_out_of_scope_employee_is_a_404(self, monkeypatch):
+        from fastapi import HTTPException
+        exports = self._wire(monkeypatch, in_scope=False)
+        with pytest.raises(HTTPException) as e:
+            exports.export_statement(period="2026-08", employee_id="NHP999",
+                                     principal=principal(Role.BDE))
+        assert e.value.status_code == 404
+
+    def test_a_manager_exports_someone_in_scope(self, monkeypatch):
+        exports = self._wire(monkeypatch)
+        r = exports.export_statement(period="2026-08", employee_id="NHP002",
+                                     principal=principal(Role.REGIONAL_MANAGER))
+        assert "incentive-NHP002-2026-08.pdf" in r.headers["content-disposition"]
+
+    def test_an_uncalculated_month_is_a_404_not_an_empty_pdf(self, monkeypatch):
+        from fastapi import HTTPException
+        exports = self._wire(monkeypatch, row=None)
+        with pytest.raises(HTTPException) as e:
+            exports.export_statement(period="2026-08", employee_id=None,
+                                     principal=principal(Role.BDE))
+        assert e.value.status_code == 404
+
+
+class TestStatementFormatting:
+    def test_indian_grouping(self):
+        from app.services.statement_pdf import indian_grouping
+        assert indian_grouping(999) == "999"
+        assert indian_grouping(1000) == "1,000"
+        assert indian_grouping(123456) == "1,23,456"
+        assert indian_grouping(12345678.9) == "1,23,45,679"
+        assert indian_grouping(-200000) == "-2,00,000"
+
+    def test_decimal_values_from_bigquery_render(self):
+        from decimal import Decimal
+        from app.services.statement_pdf import build_statement
+        pdf = build_statement(
+            period="2026-08",
+            employee={"employee_id": "NHP001", "full_name": "A BDE"},
+            breakdown={"total_incentive": Decimal("24750.01"), "bde_rate": Decimal("0.0225")},
+            transactions=[],
+            generated_by="finance@marrowmed.com",
+        )
+        assert pdf.startswith(b"%PDF")

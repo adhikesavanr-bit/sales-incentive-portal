@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { DownloadButton } from "@/components/DownloadButton";
 import { api, type Breakdown, type Transaction } from "@/lib/api";
 import { count, monthLabel, percent, rupees } from "@/lib/format";
 
@@ -40,8 +41,17 @@ export default function EmployeeDetailPage() {
       <Link href={`/team?period=${period}`} className="text-sm text-ink-muted underline">
         Back to my team
       </Link>
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">{employeeId}</h1>
-      <p className="text-sm text-ink-muted">{period && monthLabel(period)}</p>
+      <header className="mt-3 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{employeeId}</h1>
+          <p className="text-sm text-ink-muted">{period && monthLabel(period)}</p>
+        </div>
+        {data && !data.status && (
+          <DownloadButton onDownload={() => api.exportStatementPdf(period, employeeId)}>
+            Export PDF
+          </DownloadButton>
+        )}
+      </header>
 
       {data?.status && (
         <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { DownloadButton } from "@/components/DownloadButton";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type Rollup } from "@/lib/api";
 import { count, monthLabel, percent, rupeesShort } from "@/lib/format";
@@ -53,12 +54,9 @@ export default function TeamPage() {
         </div>
         <div className="flex items-center gap-2">
           <PeriodPicker value={period} onChange={setPeriod} />
-          <a
-            href={api.exportUrl("performance", period)}
-            className="btn-quiet"
-          >
+          <DownloadButton onDownload={() => api.exportCsv("performance", period)}>
             Export CSV
-          </a>
+          </DownloadButton>
         </div>
       </header>
 
