@@ -361,10 +361,12 @@ export interface RecalcResult {
 export interface TargetRow {
   employee_id: string;
   full_name?: string;
-  period: string;
-  target_units: number;
-  winner_units: number;
-  status: string;
+  // The list is everyone in scope, LEFT JOINed to targets: someone with no
+  // target for the period comes back with these four as null.
+  period: string | null;
+  target_units: number | null;
+  winner_units: number | null;
+  status: string | null;
   region?: string;
   version?: number;
 }

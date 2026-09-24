@@ -101,7 +101,9 @@ export default function TargetsPage() {
                   )}
                 </td>
                 <td className="p-3 text-right">{count(r.winner_units)}</td>
-                <td className="p-3 text-right">{rupeesShort(r.target_units * ARPU)}</td>
+                <td className="p-3 text-right">
+                  {r.target_units === null ? "—" : rupeesShort(r.target_units * ARPU)}
+                </td>
                 <td className="p-3">
                   <span
                     className={`rounded-card px-2 py-0.5 text-micro ${
@@ -110,7 +112,7 @@ export default function TargetsPage() {
                         : "bg-canvas text-ink-muted"
                     }`}
                   >
-                    {r.status.toLowerCase()}
+                    {r.status ? r.status.toLowerCase() : "not set"}
                   </span>
                 </td>
                 <td className="p-3 text-right">
@@ -130,7 +132,7 @@ export default function TargetsPage() {
                     <button
                       onClick={() => {
                         setEditing(r.employee_id);
-                        setDraft(String(r.target_units));
+                        setDraft(r.target_units === null ? "" : String(r.target_units));
                       }}
                       className="text-sm underline"
                     >
