@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
-import { api, type TargetRow } from "@/lib/api";
+import { api, cachedMe, type Me, type TargetRow } from "@/lib/api";
 import { count, monthLabel, rupeesShort } from "@/lib/format";
 
 const ARPU = 33000;
@@ -22,6 +22,10 @@ export default function TargetsPage() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const dialog = useFormDialog();
+  const [me, setMe] = useState<Me | null>(() => cachedMe());
+  useEffect(() => { api.me().then(setMe).catch(() => {}); }, []);
+  // Only admins set targets; everyone else, and view-as, sees them read-only.
+  const canEdit = !!me && !me.impersonated_by && me.permissions.includes("PROPOSE_TARGETS");
 
   function load() {
     api.targets(period).then(setRows).catch((e) => setError(e.message));
@@ -133,7 +137,7 @@ export default function TargetsPage() {
                         Cancel
                       </button>
                     </div>
-                  ) : (
+                  ) : canEdit && (
                     <button
                       onClick={() => {
                         setEditing(r.employee_id);

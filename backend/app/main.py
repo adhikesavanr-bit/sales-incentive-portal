@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.routers import admin, auth, client_errors, dashboards, exports, sales
+from app.services import dashboards as dashboard_service
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
@@ -45,8 +46,21 @@ async def catch_errors(request: Request, call_next):
         )
 
 
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+async def forget_cached_results(request: Request, call_next):
+    """A successful write may change any dashboard figure, so drop the cache."""
+    response = await call_next(request)
+    if (request.method in _WRITE_METHODS and response.status_code < 400
+            and not request.url.path.startswith(("/api/auth/", "/api/client-errors"))):
+        dashboard_service.forget_results()
+    return response
+
+
 # Order matters: middleware added last is outermost, so CORS must come after
 # the error handler in order to wrap it.
+app.add_middleware(BaseHTTPMiddleware, dispatch=forget_cached_results)
 app.add_middleware(BaseHTTPMiddleware, dispatch=catch_errors)
 app.add_middleware(
     CORSMiddleware,

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.auth.deps import current_principal, require
-from app.auth.rbac import Permission, Principal, visible_employee_sql
+from app.auth.rbac import Permission, Principal, can_see_policy, visible_employee_sql
 from app.config import get_settings
 from app.db import bigquery as bq
 from app.models.schemas import Employee, MonthStatus, Role
@@ -262,9 +262,10 @@ def approve_target(
 @router.get("/incentive/rules")
 def list_rules(principal: Principal = Depends(current_principal)):
     s = get_settings()
-    return bq.query(
+    rows = bq.query(
         f"SELECT * FROM {s.table('incentive_rules')} ORDER BY scope, threshold"
     )
+    return [r for r in rows if can_see_policy(principal.role, r["scope"])]
 
 
 @router.post("/incentive/rules")
@@ -382,7 +383,10 @@ def list_slabs(
     )
     grouped: dict[str, list] = {}
     for r in rows:
-        grouped.setdefault(r["scope"], []).append(r)
+        # Filtered here, not in the page: a hidden policy must not be in the
+        # response at all.
+        if can_see_policy(principal.role, r["scope"]):
+            grouped.setdefault(r["scope"], []).append(r)
     return {
         "period": target,
         "scopes": grouped,

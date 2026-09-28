@@ -36,19 +36,21 @@ class Permission(str, Enum):
 
 _BDE = {Permission.VIEW_OWN, Permission.VIEW_TARGETS, Permission.EXPORT_SCOPED}
 _SUB = _BDE | {Permission.VIEW_TEAM}
-_RM = _SUB | {Permission.VIEW_REGION, Permission.PROPOSE_TARGETS}
+# Targets are read-only for the sales line, managers included: only the admin
+# tiers below set them.
+_RM = _SUB | {Permission.VIEW_REGION}
 _ZM = _RM | {Permission.VIEW_ZONE}
-_BH = _ZM | {Permission.VIEW_BUSINESS, Permission.APPROVE_TARGETS}
+_BH = _ZM | {Permission.VIEW_BUSINESS}
+_EDIT_TARGETS = {Permission.PROPOSE_TARGETS, Permission.APPROVE_TARGETS}
 # Manages people and targets within their own subtree. Deliberately NOT given
 # VIEW_BUSINESS: a team lead who can edit their team's targets should not
 # thereby see every other manager's payroll.
-_TEAM_ADMIN = _RM | {
+_TEAM_ADMIN = _RM | _EDIT_TARGETS | {
     Permission.MANAGE_EMPLOYEES,
     Permission.MANAGE_HIERARCHY,
-    Permission.APPROVE_TARGETS,
 }
 
-_FIN = _BH | {
+_FIN = _BH | _EDIT_TARGETS | {
     Permission.UPLOAD_SALES,
     Permission.MANAGE_EMPLOYEES,
     Permission.MANAGE_HIERARCHY,
@@ -68,6 +70,32 @@ ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
     Role.FINANCE_ADMIN: _FIN,
     Role.SUPER_ADMIN: _FIN | {Permission.REOPEN_MONTH},
 }
+
+
+# Which incentive policies (slab scopes) each role may read. A person sees the
+# policy for their own level and every level beneath it, never above: a BDE
+# sees only the BDE policy, an RM sees RM and below, a ZM sees ZM and below.
+# The first-year MBBS unit slab applies at the BDE level. None means all.
+_BDE_POLICIES = {"BDE_MONTHLY", "FIRST_YEAR_MBBS_UNITS"}
+_SUB_POLICIES = _BDE_POLICIES | {"SUBMANAGER_MONTHLY"}
+_RM_POLICIES = _SUB_POLICIES | {"TEAM_OWNER_QUARTERLY"}
+_ZM_POLICIES = _RM_POLICIES | {"ZM_NINE_MONTH"}
+
+ROLE_POLICY_SCOPES: dict[Role, set[str] | None] = {
+    Role.BDE: _BDE_POLICIES,
+    Role.SUB_MANAGER: _SUB_POLICIES,
+    Role.REGIONAL_MANAGER: _RM_POLICIES,
+    Role.TEAM_ADMIN: _RM_POLICIES,
+    Role.ZONAL_MANAGER: _ZM_POLICIES,
+    Role.BUSINESS_HEAD: None,
+    Role.FINANCE_ADMIN: None,
+    Role.SUPER_ADMIN: None,
+}
+
+
+def can_see_policy(role: Role, scope: str) -> bool:
+    allowed = ROLE_POLICY_SCOPES.get(role, _BDE_POLICIES)
+    return allowed is None or scope in allowed
 
 
 def has_permission(role: Role, permission: Permission) -> bool:

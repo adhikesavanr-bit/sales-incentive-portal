@@ -11,10 +11,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from functools import lru_cache
 from typing import Any, Iterable, Sequence
 
-from google.cloud import bigquery
+# Lets BigQuery answer small queries in a single round trip, without creating a
+# job the client then has to poll. Read by the client library at query time.
+os.environ.setdefault("QUERY_PREVIEW_ENABLED", "true")
+
+from google.cloud import bigquery  # noqa: E402
 
 from app.config import get_settings
 
@@ -75,8 +80,10 @@ def query(sql: str, params: dict[str, Any] | None = None) -> list[dict]:
         use_query_cache=True,
     )
     log.debug("bq query: %s", sql.strip().splitlines()[0] if sql.strip() else "")
-    job = get_client().query(sql, job_config=job_config)
-    return [dict(row) for row in job.result()]
+    # query_and_wait uses jobs.query: one request for a small result, instead
+    # of insert-job-then-poll, which cost a second or more per call.
+    rows = get_client().query_and_wait(sql, job_config=job_config)
+    return [dict(row) for row in rows]
 
 
 def insert_rows(table: str, rows: Sequence[dict]) -> None:

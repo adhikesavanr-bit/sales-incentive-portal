@@ -1,6 +1,8 @@
 """Employee master and reporting hierarchy."""
 from __future__ import annotations
 
+import threading
+import time
 from datetime import date, datetime, timezone
 
 from app.config import get_settings
@@ -28,24 +30,45 @@ def _row_to_employee(r: dict) -> Employee:
     )
 
 
-def get_by_email(email: str) -> Employee | None:
+# Every request resolves its caller from the employee master, which cost a
+# BigQuery round trip on each call. The record is kept for a minute: an edit
+# made here clears it on this instance at once, and other instances see a role
+# change or deactivation within the TTL.
+_LOOKUP_TTL_SECONDS = 60
+_lookup_cache: dict[tuple[str, str], tuple[float, Employee]] = {}
+_lookup_lock = threading.Lock()
+
+
+def forget_lookups() -> None:
+    with _lookup_lock:
+        _lookup_cache.clear()
+
+
+def _cached_lookup(key: tuple[str, str], sql_where: str, params: dict) -> Employee | None:
+    with _lookup_lock:
+        hit = _lookup_cache.get(key)
+    if hit and hit[0] > time.monotonic():
+        return hit[1].model_copy()
     s = get_settings()
     rows = bq.query(
-        f"SELECT * FROM {s.table('v_employee_hierarchy')} "
-        "WHERE LOWER(email) = @email LIMIT 1",
-        {"email": email.lower()},
+        f"SELECT * FROM {s.table('v_employee_hierarchy')} WHERE {sql_where} LIMIT 1",
+        params,
     )
-    return _row_to_employee(rows[0]) if rows else None
+    if not rows:
+        return None
+    employee = _row_to_employee(rows[0])
+    with _lookup_lock:
+        _lookup_cache[key] = (time.monotonic() + _LOOKUP_TTL_SECONDS, employee)
+    return employee.model_copy()
+
+
+def get_by_email(email: str) -> Employee | None:
+    email = email.lower()
+    return _cached_lookup(("email", email), "LOWER(email) = @email", {"email": email})
 
 
 def get_by_id(employee_id: str) -> Employee | None:
-    s = get_settings()
-    rows = bq.query(
-        f"SELECT * FROM {s.table('v_employee_hierarchy')} "
-        "WHERE employee_id = @id LIMIT 1",
-        {"id": employee_id},
-    )
-    return _row_to_employee(rows[0]) if rows else None
+    return _cached_lookup(("id", employee_id), "employee_id = @id", {"id": employee_id})
 
 
 def deactivate(employee_id: str, exit_date: date, updated_by: str) -> Employee:
@@ -118,6 +141,7 @@ def upsert(employee: Employee, updated_by: str) -> None:
         "updated_at": now.isoformat(),
         "updated_by": updated_by,
     }])
+    forget_lookups()
 
 
 def set_hierarchy(employee: Employee, updated_by: str) -> None:
@@ -142,3 +166,4 @@ def set_hierarchy(employee: Employee, updated_by: str) -> None:
         "updated_at": now.isoformat(),
         "updated_by": updated_by,
     }])
+    forget_lookups()

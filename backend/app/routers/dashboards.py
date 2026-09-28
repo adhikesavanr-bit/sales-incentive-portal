@@ -6,6 +6,8 @@ exactly one row: their own.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth.deps import current_principal, require
@@ -14,6 +16,21 @@ from app.models.schemas import MonthStatus, Role
 from app.services import dashboards, employees as employee_service, month
 
 router = APIRouter(prefix="/api", tags=["dashboards"])
+
+# A page's queries are independent, and each is a BigQuery round trip, so they
+# run side by side rather than one after another.
+_pool = ThreadPoolExecutor(max_workers=16, thread_name_prefix="dash")
+
+
+def _person_dashboard(employee_id: str, period: str) -> dict:
+    row_f = _pool.submit(dashboards.own, employee_id, period)
+    trend_f = _pool.submit(dashboards.daily_trend, [employee_id], period)
+    row = row_f.result()
+    if row is None:
+        trend_f.cancel()
+        return _empty_state(employee_id, period)
+    row["trend"] = trend_f.result()
+    return row
 
 
 def _authorise_target(principal: Principal, employee_id: str | None) -> str:
@@ -57,11 +74,7 @@ def my_dashboard(
     period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(current_principal),
 ):
-    row = dashboards.own(principal.employee_id, period)
-    if row is None:
-        return _empty_state(principal.employee_id, period)
-    row["trend"] = dashboards.daily_trend([principal.employee_id], period)
-    return row
+    return _person_dashboard(principal.employee_id, period)
 
 
 def _scope_label(principal: Principal) -> str:
@@ -83,12 +96,15 @@ def my_consolidated(
     principal: Principal = Depends(require(Permission.VIEW_TEAM)),
 ):
     """The caller and everyone they can see, added up for the period."""
-    row = dashboards.consolidated(principal, period)
+    row_f = _pool.submit(dashboards.consolidated, principal, period)
+    trend_f = _pool.submit(dashboards.scope_trend, principal, period)
+    row = row_f.result()
     if row is None:
+        trend_f.cancel()
         return {**_empty_state(principal.employee_id, period),
                 "scope_label": _scope_label(principal)}
     row["scope_label"] = _scope_label(principal)
-    row["trend"] = dashboards.scope_trend(principal, period)
+    row["trend"] = trend_f.result()
     return row
 
 
@@ -118,11 +134,7 @@ def employee_dashboard(
     principal: Principal = Depends(current_principal),
 ):
     target = _authorise_target(principal, employee_id)
-    row = dashboards.own(target, period)
-    if row is None:
-        return _empty_state(target, period)
-    row["trend"] = dashboards.daily_trend([target], period)
-    return row
+    return _person_dashboard(target, period)
 
 
 @router.get("/employees/{employee_id}/sales")
@@ -154,12 +166,15 @@ def rollup(
     principal: Principal = Depends(require(Permission.VIEW_TEAM)),
 ):
     """Team / region / zone / business view, scoped to the caller."""
+    summary_f = _pool.submit(dashboards.summary, principal, period)
+    rows_f = _pool.submit(dashboards.team_rows, principal, period)
+    groups_f = _pool.submit(dashboards.group_by, principal, period, group_by) if group_by else None
     out = {
         "period": period,
         "scope": principal.role.value,
-        "summary": dashboards.summary(principal, period),
-        "employees": dashboards.team_rows(principal, period),
+        "summary": summary_f.result(),
+        "employees": rows_f.result(),
     }
-    if group_by:
-        out["groups"] = dashboards.group_by(principal, period, group_by)
+    if groups_f:
+        out["groups"] = groups_f.result()
     return out

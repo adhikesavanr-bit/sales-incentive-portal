@@ -1,6 +1,8 @@
 """Dashboard reads: the aggregated view for figures, the source table for sale detail."""
 from __future__ import annotations
 
+import copy
+import functools
 import logging
 import threading
 import time
@@ -11,6 +13,52 @@ from app.db import bigquery as bq
 from app.services import source_tables
 
 log = logging.getLogger(__name__)
+
+# Dashboard figures change only when data is written: an upload, a
+# recalculation, a month status change, an edit to people or targets. Results
+# are kept for a few minutes so repeat views and page switches skip BigQuery.
+# Any successful write through the API clears this instance's copy at once
+# (see main.py); other instances catch up when theirs expires.
+_RESULT_TTL_SECONDS = 300
+_RESULT_MAX_ENTRIES = 2000
+_results: dict[tuple, tuple[float, object]] = {}
+_results_lock = threading.Lock()
+
+
+def forget_results() -> None:
+    with _results_lock:
+        _results.clear()
+
+
+def _key_part(value):
+    # A principal is cached by the scope it can see, which is exactly what
+    # decides the rows, never by identity alone.
+    if isinstance(value, Principal):
+        scope, params = visible_employee_sql(value)
+        return ("scope", scope, tuple(sorted(params.items())))
+    if isinstance(value, (list, tuple, set)):
+        return tuple(value)
+    return value
+
+
+def _cached(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = (fn.__name__, tuple(_key_part(a) for a in args),
+               tuple(sorted((k, _key_part(v)) for k, v in kwargs.items())))
+        now = time.monotonic()
+        with _results_lock:
+            hit = _results.get(key)
+        if hit and hit[0] > now:
+            return copy.deepcopy(hit[1])
+        value = fn(*args, **kwargs)
+        with _results_lock:
+            if len(_results) >= _RESULT_MAX_ENTRIES:
+                _results.clear()
+            _results[key] = (now + _RESULT_TTL_SECONDS, value)
+        return copy.deepcopy(value)
+    return wrapper
+
 
 # Every column here must be table-qualified: employee_id, is_active, region,
 # zone and designation all exist on BOTH v_employee_hierarchy and
@@ -28,6 +76,7 @@ _METRICS = """
 """
 
 
+@_cached
 def own(employee_id: str, period: str) -> dict | None:
     s = get_settings()
     rows = bq.query(
@@ -38,6 +87,7 @@ def own(employee_id: str, period: str) -> dict | None:
     return rows[0] if rows else None
 
 
+@_cached
 def team_rows(principal: Principal, period: str) -> list[dict]:
     """Every employee in scope, one row each, ranked by achievement."""
     s = get_settings()
@@ -60,6 +110,7 @@ def team_rows(principal: Principal, period: str) -> list[dict]:
     )
 
 
+@_cached
 def summary(principal: Principal, period: str) -> dict:
     """One aggregate row for the KPI strip.
 
@@ -95,6 +146,7 @@ _SUMMED = (
 )
 
 
+@_cached
 def consolidated(principal: Principal, period: str) -> dict | None:
     """Everyone the principal can see, including themselves, added up.
 
@@ -135,6 +187,7 @@ def consolidated(principal: Principal, period: str) -> dict | None:
     }
 
 
+@_cached
 def group_by(principal: Principal, period: str, dimension: str) -> list[dict]:
     """Roll up one level down: region, zone, submanager or plan."""
     allowed = {
@@ -187,6 +240,7 @@ _sales_sql_lock = threading.Lock()
 
 
 def forget_sales_sql(period: str | None = None) -> None:
+    forget_results()  # results built from the old source are stale too
     with _sales_sql_lock:
         if period is None:
             _sales_sql_cache.clear()
@@ -234,6 +288,7 @@ def _with(period: str) -> str:
     return f"WITH q AS ({_latest_run(period)}), sales AS ({_sales_sql(period)})"
 
 
+@_cached
 def daily_trend(employee_ids: list[str], period: str) -> list[dict]:
     return bq.query(
         f"""
@@ -250,6 +305,7 @@ def daily_trend(employee_ids: list[str], period: str) -> list[dict]:
     )
 
 
+@_cached
 def scope_trend(principal: Principal, period: str) -> list[dict]:
     """Daily sales for everyone the principal can see."""
     s = get_settings()
@@ -270,6 +326,7 @@ def scope_trend(principal: Principal, period: str) -> list[dict]:
     )
 
 
+@_cached
 def plan_mix(employee_ids: list[str], period: str) -> list[dict]:
     return bq.query(
         f"""
@@ -285,6 +342,7 @@ def plan_mix(employee_ids: list[str], period: str) -> list[dict]:
     )
 
 
+@_cached
 def transactions(employee_id: str, period: str, limit: int = 200, offset: int = 0) -> list[dict]:
     """One person's sales for the period, with each sale's verdict.
 
@@ -307,6 +365,7 @@ def transactions(employee_id: str, period: str, limit: int = 200, offset: int = 
     )
 
 
+@_cached
 def coupon_analysis(employee_id: str, period: str) -> list[dict]:
     """Each coupon's verdict for the month: the "Coupon Analysis" block of the
     per-person workbook (college, coupon, group size, total, qualified).

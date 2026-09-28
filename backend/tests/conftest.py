@@ -80,3 +80,13 @@ def targets() -> dict[str, Target]:
         "NHP002": Target(employee_id="NHP002", period="2026-08",
                          target_units=50, winner_units=65),
     }
+
+
+@pytest.fixture(autouse=True)
+def _fresh_caches():
+    """Each test starts with nothing remembered from the one before."""
+    from app.services import dashboards, employees
+    dashboards.forget_results()
+    dashboards.forget_sales_sql()
+    employees.forget_lookups()
+    yield
