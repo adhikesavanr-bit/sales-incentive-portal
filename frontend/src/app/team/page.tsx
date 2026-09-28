@@ -6,8 +6,11 @@ import { Fragment, useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DownloadButton } from "@/components/DownloadButton";
 import { PeriodPicker } from "@/components/PeriodPicker";
+import {
+  SearchBox, SortTh, matches, sortRows, useSort, type SortDir, type SortState,
+} from "@/components/Sortable";
 import { api, type EmployeeMetricRow, type Rollup } from "@/lib/api";
-import { count, monthLabel, percent, rupeesShort } from "@/lib/format";
+import { count, monthLabel, percent, rupeesShort, defaultPeriod } from "@/lib/format";
 
 /**
  * One page serves manager, RM, ZM and business head. The backend decides how
@@ -15,11 +18,6 @@ import { count, monthLabel, percent, rupeesShort } from "@/lib/format";
  * heading — and a BDE who reaches this URL sees exactly one row.
  */
 
-function defaultPeriod(): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 // Which field of a person's row each grouping keys on, to list a group's people.
 const GROUP_FIELD: Record<string, keyof EmployeeMetricRow> = {
@@ -35,12 +33,44 @@ const GROUPINGS = [
   { key: "submanager", label: "By sub-manager" },
 ];
 
+type PersonKey = "name" | "region" | "target" | "achieved" | "achievement" | "qualified" | "incentive";
+type GroupKey = "group" | "people" | "target" | "qualified" | "disqualified" | "incentive";
+type GroupRow = NonNullable<Rollup["groups"]>[number];
+
+function personValue(e: EmployeeMetricRow, key: PersonKey) {
+  switch (key) {
+    case "name": return e.full_name;
+    case "region": return e.region;
+    case "target": return e.target_units;
+    case "achieved": return e.achieved_units;
+    case "achievement": return e.base_pct;
+    case "qualified": return e.qualified_revenue;
+    case "incentive": return e.total_incentive;
+  }
+}
+
+function groupValue(g: GroupRow, key: GroupKey) {
+  switch (key) {
+    case "group": return g.group_key == null ? null : String(g.group_key);
+    case "people": return g.headcount as number;
+    case "target": return g.target_revenue as number;
+    case "qualified": return g.qualified_revenue as number;
+    case "disqualified": return g.disqualified_revenue as number;
+    case "incentive": return g.incentive_liability as number;
+  }
+}
+
+function personMatches(e: EmployeeMetricRow, q: string) {
+  return matches(q, e.full_name, e.employee_id, e.designation, e.region, e.zone);
+}
+
 export default function TeamPage() {
   const [period, setPeriod] = useState(defaultPeriod());
   const [groupBy, setGroupBy] = useState("");
   const [data, setData] = useState<Rollup | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [q, setQ] = useState("");
 
   useEffect(() => setOpen(new Set()), [groupBy, period]);
 
@@ -69,6 +99,22 @@ export default function TeamPage() {
   }, [period, groupBy]);
 
   const s = data?.summary ?? {};
+
+  const visiblePeople = (data?.employees ?? []).filter((e) => personMatches(e, q));
+  const people = useSort<EmployeeMetricRow, PersonKey>(
+    visiblePeople, personValue, { key: "achievement", dir: "desc" },
+  );
+  // While searching, a group stays if its name matches or anyone in it does.
+  const visibleGroups = (data?.groups ?? []).filter(
+    (g) => !q.trim() || matches(q, String(g.group_key ?? "Unassigned"))
+      || membersOf(g.group_key).some((e) => personMatches(e, q)),
+  );
+  const groups = useSort<GroupRow, GroupKey>(
+    visibleGroups, groupValue, { key: "qualified", dir: "desc" },
+  );
+  const searching = !!q.trim();
+  const groupMatchesByName = (g: GroupRow) =>
+    matches(q, String(g.group_key ?? "Unassigned"));
 
   return (
     <AppShell>
@@ -103,7 +149,8 @@ export default function TeamPage() {
              sub={rupeesShort(s.net_payable as number) + " payable now"} />
       </div>
 
-      <div className="mt-6 flex gap-1">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="flex gap-1">
         {GROUPINGS.map((g) => (
           <button
             key={g.key}
@@ -116,24 +163,27 @@ export default function TeamPage() {
           </button>
         ))}
       </div>
+        <SearchBox value={q} onChange={setQ} placeholder="Search name, ID, region or designation" />
+      </div>
 
       {groupBy && data?.groups && (
         <section className="panel mt-4 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-canvas text-left text-micro text-ink-muted">
               <tr>
-                <th className="p-3 font-medium">Group</th>
-                <th className="p-3 text-right font-medium">People</th>
-                <th className="p-3 text-right font-medium">Target</th>
-                <th className="p-3 text-right font-medium">Qualified</th>
-                <th className="p-3 text-right font-medium">Disqualified</th>
-                <th className="p-3 text-right font-medium">Incentive</th>
+                <SortTh label="Group" column="group" firstDir="asc" sort={groups.sort} onSort={groups.toggle} />
+                <SortTh label="People" column="people" align="right" sort={groups.sort} onSort={groups.toggle} />
+                <SortTh label="Target" column="target" align="right" sort={groups.sort} onSort={groups.toggle} />
+                <SortTh label="Qualified" column="qualified" align="right" sort={groups.sort} onSort={groups.toggle} />
+                <SortTh label="Disqualified" column="disqualified" align="right" sort={groups.sort} onSort={groups.toggle} />
+                <SortTh label="Incentive" column="incentive" align="right" sort={groups.sort} onSort={groups.toggle} />
               </tr>
             </thead>
             <tbody>
-              {data.groups.map((g) => {
+              {groups.sorted.map((g) => {
                 const key = String(g.group_key ?? "");
-                const expanded = open.has(key);
+                // A search opens the groups it found people in.
+                const expanded = open.has(key) || (searching && !groupMatchesByName(g));
                 return (
                 <Fragment key={key}>
                 <tr
@@ -168,13 +218,27 @@ export default function TeamPage() {
                 {expanded && (
                   <tr className="bg-canvas/60">
                     <td colSpan={6} className="px-3 pb-3 pt-0">
-                      <GroupMembers people={membersOf(g.group_key)} period={period} />
+                      <GroupMembers
+                        people={groupMatchesByName(g)
+                          ? membersOf(g.group_key)
+                          : membersOf(g.group_key).filter((e) => personMatches(e, q))}
+                        period={period}
+                        sort={people.sort}
+                        onSort={people.toggle}
+                      />
                     </td>
                   </tr>
                 )}
                 </Fragment>
                 );
               })}
+              {visibleGroups.length === 0 && data.groups.length > 0 && (
+                <tr>
+                  <td colSpan={6} className="p-8 text-center text-ink-muted">
+                    No one matches that search.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </section>
@@ -185,17 +249,17 @@ export default function TeamPage() {
           <table className="w-full text-sm">
             <thead className="bg-canvas text-left text-micro text-ink-muted">
               <tr>
-                <th className="p-3 font-medium">Name</th>
-                <th className="p-3 font-medium">Region</th>
-                <th className="p-3 text-right font-medium">Target</th>
-                <th className="p-3 text-right font-medium">Achieved</th>
-                <th className="p-3 text-right font-medium">Achievement</th>
-                <th className="p-3 text-right font-medium">Qualified</th>
-                <th className="p-3 text-right font-medium">Incentive</th>
+                <SortTh label="Name" column="name" firstDir="asc" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Region" column="region" firstDir="asc" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Target" column="target" align="right" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Achieved" column="achieved" align="right" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Achievement" column="achievement" align="right" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Qualified" column="qualified" align="right" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Incentive" column="incentive" align="right" sort={people.sort} onSort={people.toggle} />
               </tr>
             </thead>
             <tbody>
-              {(data?.employees ?? []).map((e) => (
+              {people.sorted.map((e) => (
                 <tr key={e.employee_id} className="border-t border-rule">
                   <td className="p-3">
                     <Link
@@ -224,6 +288,13 @@ export default function TeamPage() {
                   </td>
                 </tr>
               )}
+              {data && data.employees.length > 0 && visiblePeople.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-ink-muted">
+                    No one matches that search.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </section>
@@ -232,7 +303,18 @@ export default function TeamPage() {
   );
 }
 
-function GroupMembers({ people, period }: { people: EmployeeMetricRow[]; period: string }) {
+function GroupMembers({
+  people,
+  period,
+  sort,
+  onSort,
+}: {
+  people: EmployeeMetricRow[];
+  period: string;
+  sort: SortState<PersonKey>;
+  onSort: (key: PersonKey, firstDir?: SortDir) => void;
+}) {
+  const sorted = sortRows(people, personValue, sort);
   if (people.length === 0) {
     return <p className="p-3 text-sm text-ink-muted">No one in this group.</p>;
   }
@@ -240,16 +322,17 @@ function GroupMembers({ people, period }: { people: EmployeeMetricRow[]; period:
     <table className="w-full text-sm">
       <thead className="text-left text-micro text-ink-muted">
         <tr>
-          <th className="py-2 pl-8 pr-3 font-medium">Name</th>
-          <th className="p-2 text-right font-medium">Target</th>
-          <th className="p-2 text-right font-medium">Achieved</th>
-          <th className="p-2 text-right font-medium">Achievement</th>
-          <th className="p-2 text-right font-medium">Qualified</th>
-          <th className="p-2 text-right font-medium">Incentive</th>
+          <SortTh label="Name" column="name" firstDir="asc" sort={sort} onSort={onSort}
+                  className="py-2 pl-8 pr-3" />
+          <SortTh label="Target" column="target" align="right" sort={sort} onSort={onSort} className="p-2" />
+          <SortTh label="Achieved" column="achieved" align="right" sort={sort} onSort={onSort} className="p-2" />
+          <SortTh label="Achievement" column="achievement" align="right" sort={sort} onSort={onSort} className="p-2" />
+          <SortTh label="Qualified" column="qualified" align="right" sort={sort} onSort={onSort} className="p-2" />
+          <SortTh label="Incentive" column="incentive" align="right" sort={sort} onSort={onSort} className="p-2" />
         </tr>
       </thead>
       <tbody>
-        {people.map((e) => (
+        {sorted.map((e) => (
           <tr key={e.employee_id} className="border-t border-rule">
             <td className="py-2 pl-8 pr-3">
               <Link

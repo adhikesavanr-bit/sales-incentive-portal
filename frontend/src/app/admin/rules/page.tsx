@@ -6,7 +6,7 @@ import { AppShell } from "@/components/AppShell";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type CouponRule, type SlabRow } from "@/lib/api";
-import { count, monthLabel, percent } from "@/lib/format";
+import { count, monthLabel, percent, defaultPeriod } from "@/lib/format";
 
 /**
  * The rules behind every number in the app, in one place.
@@ -26,10 +26,6 @@ const SCOPE_LABELS: Record<string, string> = {
   FIRST_YEAR_MBBS_UNITS: "First-year MBBS incremental (by units)",
 };
 
-function thisMonth(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 function firstOfNextMonth(): string {
   const d = new Date();
@@ -38,7 +34,7 @@ function firstOfNextMonth(): string {
 }
 
 export default function RulesPage() {
-  const [period, setPeriod] = useState(thisMonth());
+  const [period, setPeriod] = useState(defaultPeriod());
   const [coupons, setCoupons] = useState<CouponRule[]>([]);
   const [scopes, setScopes] = useState<Record<string, SlabRow[]>>({});
   const [editable, setEditable] = useState(false);

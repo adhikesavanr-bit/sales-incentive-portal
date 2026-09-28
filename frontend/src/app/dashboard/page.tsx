@@ -12,7 +12,7 @@ import { SlabRuler } from "@/components/SlabRuler";
 import Link from "next/link";
 
 import { api, type Breakdown, type Consolidated, type Me, type Transaction } from "@/lib/api";
-import { count, monthLabel, percent, rupees, rupeesShort } from "@/lib/format";
+import { count, monthLabel, percent, rupees, rupeesShort, defaultPeriod } from "@/lib/format";
 
 // recharts is loaded on its own, after the figures render.
 const DailySalesChart = dynamic(() => import("@/components/DailySalesChart"), {
@@ -36,11 +36,6 @@ const CAN_TOGGLE = new Set(["REGIONAL_MANAGER", "ZONAL_MANAGER"]);
 
 type View = "me" | "team";
 
-function defaultPeriod(): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 export default function DashboardPage() {
   const [period, setPeriod] = useState(defaultPeriod());

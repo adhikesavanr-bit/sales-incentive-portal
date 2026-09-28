@@ -7,13 +7,8 @@ import { DownloadButton } from "@/components/DownloadButton";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { api, type MonthStatus, type RecalcResult, type UploadSummary } from "@/lib/api";
-import { count, monthLabel, rupeesShort } from "@/lib/format";
+import { count, monthLabel, rupeesShort, defaultPeriod } from "@/lib/format";
 
-function defaultPeriod(): string {
-  const d = new Date();
-  d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 export default function UploadPage() {
   const [period, setPeriod] = useState(defaultPeriod());

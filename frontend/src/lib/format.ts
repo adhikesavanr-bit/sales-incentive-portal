@@ -37,9 +37,22 @@ export function monthLabel(period: string): string {
   });
 }
 
+/**
+ * The month every page opens on: last month, the latest one with a full set of
+ * sales. One definition, so Targets and Rules open on the same month as the
+ * dashboards rather than on the month in progress.
+ */
+export function defaultPeriod(): string {
+  const d = new Date();
+  d.setDate(1); // on the 31st, stepping back a month would skip one
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export function recentPeriods(n = 12): string[] {
   const out: string[] = [];
   const d = new Date();
+  d.setDate(1);
   for (let i = 0; i < n; i++) {
     out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     d.setMonth(d.getMonth() - 1);

@@ -4,7 +4,9 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile, status,
+)
 from pydantic import BaseModel, Field
 
 from app.auth.deps import current_principal, require
@@ -20,6 +22,7 @@ from app.services import (
     incentive_run,
     month,
     source_tables,
+    targets as target_service,
 )
 
 router = APIRouter(prefix="/api", tags=["admin"])
@@ -171,23 +174,7 @@ def list_targets(
     period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(current_principal),
 ):
-    s = get_settings()
-    scope, params = visible_employee_sql(principal)
-    # LEFT JOIN from people to targets, so someone with no target for the
-    # period still appears with a blank row to fill in. The previous inner
-    # join is why a fresh month looked empty.
-    return bq.query(
-        f"""
-        SELECT h.employee_id, h.full_name, h.region, h.zone, h.designation,
-               t.period, t.target_units, t.winner_units, t.status, t.version
-        FROM {s.table('v_employee_hierarchy')} h
-        LEFT JOIN {s.table('targets')} t
-          ON t.employee_id = h.employee_id AND t.period = @p
-        WHERE h.is_active AND {scope}
-        ORDER BY h.region, h.full_name
-        """,
-        {**params, "p": period},
-    )
+    return target_service.in_scope(principal, period)
 
 
 @router.post("/targets")
@@ -195,9 +182,12 @@ def upsert_target(
     body: TargetUpsert,
     principal: Principal = Depends(require(Permission.PROPOSE_TARGETS)),
 ):
-    """RMs propose; only an approver's submission lands as APPROVED."""
+    """Set one person's target. Only for people in the caller's own scope."""
     month.require_open(body.period)
     s = get_settings()
+    scope, params = visible_employee_sql(principal)
+    if not employee_service.is_in_scope(body.employee_id, scope, params):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such employee in your reporting line.")
 
     old = bq.query(
         f"SELECT * FROM {s.table('targets')} "
@@ -206,35 +196,54 @@ def upsert_target(
         {"e": body.employee_id, "p": body.period},
     )
     version = int(old[0]["version"]) + 1 if old else 1
-
-    approver = principal.can(Permission.APPROVE_TARGETS)
-    # Winner units are Base x 1.3 in every month of the supplied workbook.
-    winner = body.winner_units if body.winner_units is not None else body.target_units * 1.3
     now = datetime.now(timezone.utc).isoformat()
-
-    bq.append_rows("targets", [{
-        "employee_id": body.employee_id,
-        "period": body.period,
-        "vertical": "Marrow",
-        "target_units": body.target_units,
-        "winner_units": winner,
-        "status": "APPROVED" if approver else "SUBMITTED",
-        "submitted_by": principal.email,
-        "approved_by": principal.email if approver else None,
-        "approved_at": now if approver else None,
-        "version": version,
-        "updated_at": now,
-    }])
+    row = target_service.version_row(principal, body.employee_id, body.period,
+                              body.target_units, body.winner_units, version, now)
+    bq.append_rows("targets", [row])
     audit.record(
         principal.email, "TARGET_UPDATE", entity_type="target",
         affected_record=f"{body.employee_id}:{body.period}",
         old_value=old[0] if old else None,
-        new_value={"target_units": body.target_units, "winner_units": winner},
+        new_value={"target_units": body.target_units, "winner_units": row["winner_units"]},
         reason=body.reason,
     )
     return {"employee_id": body.employee_id, "period": body.period,
-            "target_units": body.target_units, "winner_units": winner,
-            "status": "APPROVED" if approver else "SUBMITTED", "version": version}
+            "target_units": body.target_units, "winner_units": row["winner_units"],
+            "status": row["status"], "version": version}
+
+
+@router.post("/targets/bulk")
+async def bulk_targets(
+    file: UploadFile = File(...),
+    period: str = Form(..., pattern=r"^\d{4}-\d{2}$"),
+    confirm: bool = Form(False),
+    reason: str = Form(""),
+    principal: Principal = Depends(require(Permission.PROPOSE_TARGETS)),
+):
+    """Set many targets from a CSV or Excel file.
+
+    Without `confirm` it only checks the file and returns a preview. With it,
+    the same file is checked again and, if nothing is wrong, every changed
+    row is written. A file with any error writes nothing.
+    """
+    month.require_open(period)
+    if not file.filename or not file.filename.lower().endswith((".csv", ".xlsx", ".xlsm", ".xls")):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Upload a .csv or .xlsx file.")
+    content = await file.read()
+    try:
+        rows = target_service.parse(file.filename, content)
+    except Exception as exc:  # noqa: BLE001 - a bad file is the caller's to fix
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"The file could not be read: {exc}") from exc
+    checked = target_service.preview(principal, period, rows)
+    if not confirm:
+        return checked
+    if checked["counts"]["error"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "Fix the rows with errors and upload again. Nothing was saved.")
+    if len(reason.strip()) < 3:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Give a reason for the change.")
+    written = target_service.commit(principal, period, checked, reason.strip())
+    return {**checked, "written": written}
 
 
 @router.post("/targets/{employee_id}/approve")

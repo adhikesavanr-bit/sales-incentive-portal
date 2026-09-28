@@ -260,6 +260,16 @@ export const api = {
   }) => request<TargetRow>("/api/targets", { method: "POST", body: JSON.stringify(body) }),
 
 
+  /** Without `confirm`, checks the file and returns a preview; nothing is saved. */
+  bulkTargets: (file: File, period: string, confirm = false, reason = "") => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("period", period);
+    body.append("confirm", String(confirm));
+    body.append("reason", reason);
+    return request<BulkTargetResult>("/api/targets/bulk", { method: "POST", body });
+  },
+
   rules: () => request<RuleRow[]>("/api/incentive/rules"),
 
   employees: (includeInactive = false) =>
@@ -509,7 +519,28 @@ export interface TargetRow {
   winner_units: number | null;
   status: string | null;
   region?: string;
+  zone?: string | null;
+  designation?: string | null;
   version?: number;
+}
+
+export interface BulkTargetRow {
+  line: number;
+  employee_id: string;
+  full_name: string | null;
+  region: string | null;
+  old_target_units: number | null;
+  target_units: number | null;
+  winner_units: number | null;
+  status: "change" | "unchanged" | "skipped" | "error";
+  error: string | null;
+}
+
+export interface BulkTargetResult {
+  period: string;
+  rows: BulkTargetRow[];
+  counts: Record<BulkTargetRow["status"], number>;
+  written?: number;
 }
 
 export interface EmployeeRow {

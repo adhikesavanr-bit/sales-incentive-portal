@@ -35,6 +35,29 @@ def record(
     }])
 
 
+def record_many(
+    user_email: str,
+    action: str,
+    entries: list[dict],
+    *,
+    reason: str | None = None,
+) -> None:
+    """Several audit rows in one insert. Each entry takes `record`'s keywords."""
+    now = datetime.now(timezone.utc).isoformat()
+    bq.insert_rows("audit_log", [{
+        "audit_id": str(uuid.uuid4()),
+        "user_email": user_email,
+        "action": action,
+        "entity_type": e.get("entity_type"),
+        "affected_record": e.get("affected_record"),
+        "old_value": json.dumps(e["old_value"], default=str) if e.get("old_value") is not None else None,
+        "new_value": json.dumps(e["new_value"], default=str) if e.get("new_value") is not None else None,
+        "reason": reason,
+        "ip_address": None,
+        "occurred_at": now,
+    } for e in entries])
+
+
 def search(
     action: str | None = None,
     user_email: str | None = None,
