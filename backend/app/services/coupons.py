@@ -12,7 +12,14 @@ from app.models.schemas import CouponSignature
 
 
 def load_for_period(period: str) -> list[CouponSignature]:
-    """Coupon signatures active in or before the period.
+    """The period's coupon signatures: those activated during the month.
+
+    Each month's coupon consumption report, and so each month's Coupon
+    Working, holds only coupons activated that month, and the workbook matches
+    a sale to a coupon by code within that set. Reading earlier months'
+    coupons as well would let a code reused across months pull a sale onto
+    last month's signature: with July loaded, 13 August sales moved to a July
+    SA151MMZ coupon and August's qualified revenue fell by Rs 1.67 lakh.
 
     Loaded wholesale (~1,200 rows/month) because clubbing needs the full set:
     a coupon's verdict depends on its siblings.
@@ -21,7 +28,7 @@ def load_for_period(period: str) -> list[CouponSignature]:
     rows = bq.query(
         f"SELECT * FROM {s.table('coupon_master')} "
         "WHERE activation_date IS NULL "
-        "   OR activation_date <= LAST_DAY(PARSE_DATE('%Y-%m', @p))",
+        "   OR DATE_TRUNC(activation_date, MONTH) = PARSE_DATE('%Y-%m', @p)",
         {"p": period},
     )
     return [

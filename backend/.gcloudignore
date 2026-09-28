@@ -1,0 +1,10 @@
+# What `gcloud run deploy --source` uploads to Cloud Build. Without this file
+# the whole folder went up, local secrets and the macOS virtualenv included.
+.gcloudignore
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+.env.*
+.DS_Store

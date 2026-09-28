@@ -236,7 +236,7 @@ class TestSqlStatementSplitting:
         sql = (pathlib.Path(__file__).resolve().parents[1] / "app/db/schema.sql").read_text()
         sql = sql.replace("${PROJECT}", "p").replace("${DATASET}", "d").replace("${LOCATION}", "US")
         stmts = split_statements(sql)
-        assert len(stmts) == 20
+        assert len(stmts) == 21
         for s in stmts:
             assert s.count("(") == s.count(")"), s.splitlines()[0]
 

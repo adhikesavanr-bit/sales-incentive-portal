@@ -1,0 +1,9 @@
+# What `gcloud run deploy --source` uploads to Cloud Build: the source, not
+# local builds, dependencies or environment files.
+.gcloudignore
+node_modules/
+.next/
+.env
+.env.*
+*.tsbuildinfo
+.DS_Store

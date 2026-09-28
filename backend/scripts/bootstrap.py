@@ -95,8 +95,11 @@ def read_target_block(src: Path, period: str) -> pd.DataFrame:
     raw = pd.read_excel(
         FILES["incentive_report"], sheet_name="Target Achieved- Input", header=None
     )
-    month = datetime.strptime(period, "%Y-%m").strftime("%b %Y")
-    hits = raw[raw[0].astype(str).str.contains(month, na=False)].index
+    when = datetime.strptime(period, "%Y-%m")
+    month = when.strftime("%b %Y")
+    # Titles use either spelling: "Aug 2026-27" but "July 2026-27".
+    title = rf"\b(?:{when:%b}|{when:%B})\s+{when:%Y}"
+    hits = raw[raw[0].astype(str).str.contains(title, case=False, regex=True, na=False)].index
     if len(hits) == 0:
         raise SystemExit(
             f"No target block titled '{month}' in Target Achieved- Input. "
@@ -398,7 +401,17 @@ def main() -> int:
     ap.add_argument("--period", default="2026-08")
     ap.add_argument("--dry-run", action="store_true",
                     help="report what would be loaded; touches nothing")
+    ap.add_argument(
+        "--only", default="",
+        help="comma-separated tables to load, e.g. 'targets' to add a month's "
+             "targets without replacing the people list. Default: all four.",
+    )
     a = ap.parse_args()
+    loadable = ("employee_master", "reporting_hierarchy", "targets", "coupon_master")
+    only = {t.strip() for t in a.only.split(",") if t.strip()} or set(loadable)
+    unknown = only - set(loadable)
+    if unknown:
+        raise SystemExit(f"--only takes {', '.join(loadable)}; not {', '.join(sorted(unknown))}")
 
     global FILES
     FILES = require_sources(
@@ -466,19 +479,24 @@ def main() -> int:
 
     print(f"\nLoading into {s.gcp_project_id}.{s.bq_dataset} …")
 
+    data = {k: v for k, v in data.items() if k in only}
+    print(f"  loading only: {', '.join(t for t in loadable if t in only)}")
+
     # Employee master and hierarchy are current-state: replace them.
     for table in ("employee_master", "reporting_hierarchy"):
-        bq.query(f"DELETE FROM {s.table(table)} WHERE TRUE")
+        if table in only:
+            bq.query(f"DELETE FROM {s.table(table)} WHERE TRUE")
 
     # Targets are period-scoped: replace this period only.
-    bq.query(f"DELETE FROM {s.table('targets')} WHERE period = @p", {"p": a.period})
+    if "targets" in only:
+        bq.query(f"DELETE FROM {s.table('targets')} WHERE period = @p", {"p": a.period})
 
     # Coupon signatures ACCUMULATE across months. Each month's workbook carries
     # only its own coupons, so wiping the table would delete every previous
     # month's signatures — and with them the ability to recalculate those
     # months, since qualification depends on the coupon master. Replace only
     # the signatures present in this load, keyed on coupon_signature.
-    signatures = [r["coupon_signature"] for r in data["coupon_master"]]
+    signatures = [r["coupon_signature"] for r in data.get("coupon_master", [])]
     if signatures:
         for i in range(0, len(signatures), 5000):
             bq.query(
@@ -496,8 +514,11 @@ def main() -> int:
         n = bq.load_rows(table, rows)
         print(f"  {table:22s} {n:6,} loaded")
 
-    from app.db.ddl import seed_rules
-    seed_rules()
+    # Only a fresh dataset needs the default rules. Seeding again would append
+    # another copy of every slab on each run, alongside any edits Finance made.
+    if not bq.query(f"SELECT COUNT(*) AS n FROM {s.table('incentive_rules')}")[0]["n"]:
+        from app.db.ddl import seed_rules
+        seed_rules()
     print("\nDone. Next: upload a sales file, then recalculate the period.")
     return 0
 

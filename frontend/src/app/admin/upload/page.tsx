@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { CouponStep } from "@/components/CouponStep";
 import { DownloadButton } from "@/components/DownloadButton";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
-import { api, type MonthStatus, type RecalcResult, type UploadSummary } from "@/lib/api";
+import {
+  api, type MonthStatus, type RecalcResult, type SourceResolution, type UploadSummary,
+} from "@/lib/api";
 import { count, monthLabel, rupeesShort, defaultPeriod } from "@/lib/format";
 
 
@@ -19,7 +22,20 @@ export default function UploadPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [recalc, setRecalc] = useState<RecalcResult | null>(null);
   const [status, setStatus] = useState<MonthStatus | null>(null);
+  const [source, setSource] = useState<SourceResolution | null>(null);
+  const [sourceError, setSourceError] = useState<string | null>(null);
   const dialog = useFormDialog();
+
+  useEffect(() => {
+    setSource(null);
+    setSourceError(null);
+    setSummary(null);
+    setFile(null);
+    setRecalc(null);
+    api.resolveSource(period).then(setSource).catch((e) => setSourceError(e.message));
+  }, [period]);
+  // A month read from a BigQuery table needs no sales file.
+  const fromTable = !!source?.source && !!source.usable;
 
   async function validate() {
     if (!file) return;
@@ -89,7 +105,8 @@ export default function UploadPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Sales upload</h1>
           <p className="text-sm text-ink-muted">
-            Load a month of sales, check it, then publish the incentive.
+            Check where the month&rsquo;s sales come from, load its coupons, then
+          calculate and publish the incentive.
           </p>
         </div>
         <PeriodPicker value={period} onChange={setPeriod} />
@@ -105,32 +122,60 @@ export default function UploadPage() {
       )}
 
       <section className="panel mt-6 p-6">
-        <h2 className="text-sm font-semibold">1. Choose a file</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          A .csv or .xlsx export with the standard sales columns. Nothing is
-          written until you confirm the import.
-        </p>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <input
-            type="file"
-            accept=".csv,.xlsx,.xlsm,.xls"
-            onChange={(e) => {
-              setFile(e.target.files?.[0] ?? null);
-              setSummary(null);
-            }}
-            className="text-sm file:mr-3 file:rounded-card file:border file:border-rule
-                       file:bg-surface file:px-3 file:py-2 file:text-sm"
-          />
-          <button onClick={validate} disabled={!file || !!busy} className="btn-primary">
-            Check this file
-          </button>
-        </div>
+        <h2 className="text-sm font-semibold">1. Sales for the month</h2>
+        {!source && !sourceError && <p className="mt-1 text-sm text-ink-muted">Checking…</p>}
+        {fromTable && (
+          <p className="mt-1 text-sm">
+            Read directly from BigQuery:{" "}
+            <code className="rounded-card bg-canvas px-1.5 py-0.5">{source!.source}</code>
+            <span className="text-qualified"> · found, all required columns present</span>.
+            {" "}No file upload is needed; recalculating reads it as it stands.
+          </p>
+        )}
+        {source?.source && !source.usable && (
+          <p className="mt-1 text-sm text-disqualified">
+            {source.source} is missing: {(source.missing_required ?? []).join(", ")}.
+            Upload a sales file instead.
+          </p>
+        )}
+        {(sourceError || (source && !source.source)) && (
+          <p className="mt-1 text-sm text-ink-muted">
+            {sourceError ?? source?.message} Upload the month&rsquo;s sales file below.
+          </p>
+        )}
+
+        {(source || sourceError) && (
+          <details className="mt-4" open={!fromTable}>
+            <summary className="cursor-pointer text-sm text-ink-muted">
+              {fromTable ? "Upload a sales file instead" : "Upload a sales file"}
+            </summary>
+            <p className="mt-2 text-sm text-ink-muted">
+              The <code>monthly_subscription_data_…csv</code> export, or .xlsx with the
+              same columns. Nothing is written until you confirm the import.
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xlsm,.xls"
+                onChange={(e) => {
+                  setFile(e.target.files?.[0] ?? null);
+                  setSummary(null);
+                }}
+                className="text-sm file:mr-3 file:rounded-card file:border file:border-rule
+                           file:bg-surface file:px-3 file:py-2 file:text-sm"
+              />
+              <button onClick={validate} disabled={!file || !!busy} className="btn-primary">
+                Check this file
+              </button>
+            </div>
+          </details>
+        )}
         {busy && <p className="mt-3 text-sm text-ink-muted">{busy}</p>}
       </section>
 
       {summary && (
         <section className="panel mt-4 p-6">
-          <h2 className="text-sm font-semibold">2. Review before importing</h2>
+          <h2 className="text-sm font-semibold">Review the sales file before importing</h2>
           <dl className="mt-4 grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <Fig label="Rows" value={count(summary.total_rows)} />
             <Fig label="Valid" value={count(summary.valid_rows)} tone="qualified" />
@@ -187,6 +232,8 @@ export default function UploadPage() {
           </div>
         </section>
       )}
+
+      <CouponStep period={period} step={2} />
 
       <section className="panel mt-4 p-6">
         <h2 className="text-sm font-semibold">3. Calculate and publish</h2>

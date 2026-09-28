@@ -85,6 +85,21 @@ CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.coupon_master` (
 CLUSTER BY coupon_code, employee_id;
 
 -- ---------------------------------------------------------------------------
+-- Coupon agents: who owns each sales-master code in the coupon consumption
+-- report. Current state, replaced as a whole when a new list is uploaded.
+-- A code missing here means its coupons are not field coupons and are left
+-- out, exactly as the Coupon Working sheet leaves them out.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.coupon_agents` (
+  initial      STRING NOT NULL,   -- sales_master in the consumption report
+  employee_id  STRING NOT NULL,
+  agent_name   STRING,
+  zone         STRING,            -- becomes coupon_master.region
+  updated_at   TIMESTAMP,
+  updated_by   STRING
+);
+
+-- ---------------------------------------------------------------------------
 -- Qualification output, one row per transaction.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.transaction_qualification` (

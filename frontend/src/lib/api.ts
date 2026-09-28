@@ -238,6 +238,30 @@ export const api = {
     return request<UploadSummary>("/api/sales/validate", { method: "POST", body });
   },
 
+  /** Where a month's sales are read from right now, and whether that works. */
+  resolveSource: (period: string) =>
+    request<SourceResolution>(`/api/sources/resolve?period=${period}`),
+
+  couponAgents: () => request<CouponAgentsSummary>("/api/sales/coupon-agents"),
+
+  replaceCouponAgents: (file: File, confirm = false, reason = "") => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("confirm", String(confirm));
+    body.append("reason", reason);
+    return request<CouponAgentsDiff>("/api/sales/coupon-agents", { method: "POST", body });
+  },
+
+  /** Without `confirm`, checks the coupon consumption report; nothing is saved. */
+  importCoupons: (file: File, period: string, confirm = false, reason = "") => {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("period", period);
+    body.append("confirm", String(confirm));
+    body.append("reason", reason);
+    return request<CouponImport>("/api/sales/coupons", { method: "POST", body });
+  },
+
   importBatch: (batchId: string, withErrors = false) =>
     request<{ rows_imported: number }>(
       `/api/sales/import/${batchId}?confirm_with_errors=${withErrors}`,
@@ -522,6 +546,43 @@ export interface TargetRow {
   zone?: string | null;
   designation?: string | null;
   version?: number;
+}
+
+export interface SourceResolution {
+  period: string;
+  source: string | null;
+  origin?: string;
+  columns?: number;
+  missing_required?: string[];
+  usable?: boolean;
+  message?: string;
+}
+
+export interface CouponAgentsSummary {
+  agents: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+export interface CouponAgentsDiff {
+  agents: number;
+  added: string[];
+  removed: string[];
+  changed: string[];
+  written?: number;
+}
+
+export interface CouponImport {
+  period: string;
+  total: number;
+  included: number;
+  excluded: number;
+  excluded_by_code: Record<string, number>;
+  owners: number;
+  by_group_size: Record<string, number>;
+  errors: { line: number; message: string }[];
+  warnings: string[];
+  written?: number;
 }
 
 export interface BulkTargetRow {
