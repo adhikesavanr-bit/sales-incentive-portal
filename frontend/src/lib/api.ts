@@ -485,7 +485,8 @@ export interface Rollup {
   scope: string;
   summary: Record<string, number>;
   employees: EmployeeMetricRow[];
-  groups?: { group_key: string; [k: string]: unknown }[];
+  // group_name is set when the group is a person (sub-manager, RM).
+  groups?: { group_key: string; group_name?: string | null; [k: string]: unknown }[];
 }
 
 export interface EmployeeMetricRow {

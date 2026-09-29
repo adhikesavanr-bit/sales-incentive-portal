@@ -33,7 +33,8 @@ const GROUPINGS = [
   { key: "submanager", label: "By sub-manager" },
 ];
 
-type PersonKey = "name" | "region" | "target" | "achieved" | "achievement" | "qualified" | "incentive";
+type PersonKey =
+  | "name" | "region" | "target" | "achieved" | "achievement" | "qualified" | "disqualified" | "incentive";
 type GroupKey = "group" | "people" | "target" | "qualified" | "disqualified" | "incentive";
 type GroupRow = NonNullable<Rollup["groups"]>[number];
 
@@ -45,13 +46,20 @@ function personValue(e: EmployeeMetricRow, key: PersonKey) {
     case "achieved": return e.achieved_units;
     case "achievement": return e.base_pct;
     case "qualified": return e.qualified_revenue;
+    case "disqualified": return e.disqualified_revenue;
     case "incentive": return e.total_incentive;
   }
 }
 
+// A person's group (sub-manager) reads by name; the ID stays as the key.
+function groupLabel(g: GroupRow) {
+  if (g.group_key == null) return "Unassigned";
+  return g.group_name || String(g.group_key);
+}
+
 function groupValue(g: GroupRow, key: GroupKey) {
   switch (key) {
-    case "group": return g.group_key == null ? null : String(g.group_key);
+    case "group": return g.group_key == null ? null : groupLabel(g);
     case "people": return g.headcount as number;
     case "target": return g.target_revenue as number;
     case "qualified": return g.qualified_revenue as number;
@@ -106,7 +114,7 @@ export default function TeamPage() {
   );
   // While searching, a group stays if its name matches or anyone in it does.
   const visibleGroups = (data?.groups ?? []).filter(
-    (g) => !q.trim() || matches(q, String(g.group_key ?? "Unassigned"))
+    (g) => !q.trim() || matches(q, groupLabel(g), String(g.group_key ?? ""))
       || membersOf(g.group_key).some((e) => personMatches(e, q)),
   );
   const groups = useSort<GroupRow, GroupKey>(
@@ -114,7 +122,7 @@ export default function TeamPage() {
   );
   const searching = !!q.trim();
   const groupMatchesByName = (g: GroupRow) =>
-    matches(q, String(g.group_key ?? "Unassigned"));
+    matches(q, groupLabel(g), String(g.group_key ?? ""));
 
   return (
     <AppShell>
@@ -200,7 +208,12 @@ export default function TeamPage() {
                       <span aria-hidden className="inline-block w-3 text-ink-faint">
                         {expanded ? "▾" : "▸"}
                       </span>
-                      {String(g.group_key ?? "Unassigned")}
+                      {groupLabel(g)}
+                      {g.group_name && (
+                        <span className="text-micro font-normal text-ink-faint">
+                          {String(g.group_key)}
+                        </span>
+                      )}
                     </button>
                   </td>
                   <td className="p-3 text-right">{count(g.headcount as number)}</td>
@@ -255,6 +268,7 @@ export default function TeamPage() {
                 <SortTh label="Achieved" column="achieved" align="right" sort={people.sort} onSort={people.toggle} />
                 <SortTh label="Achievement" column="achievement" align="right" sort={people.sort} onSort={people.toggle} />
                 <SortTh label="Qualified" column="qualified" align="right" sort={people.sort} onSort={people.toggle} />
+                <SortTh label="Disqualified" column="disqualified" align="right" sort={people.sort} onSort={people.toggle} />
                 <SortTh label="Incentive" column="incentive" align="right" sort={people.sort} onSort={people.toggle} />
               </tr>
             </thead>
@@ -278,19 +292,20 @@ export default function TeamPage() {
                   <td className="p-3 text-right">{count(e.achieved_units)}</td>
                   <td className="p-3 text-right font-medium">{percent(e.base_pct)}</td>
                   <td className="p-3 text-right">{rupeesShort(e.qualified_revenue)}</td>
+                  <td className="p-3 text-right text-disqualified">{rupeesShort(e.disqualified_revenue)}</td>
                   <td className="p-3 text-right">{rupeesShort(e.total_incentive)}</td>
                 </tr>
               ))}
               {data && data.employees.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-ink-muted">
+                  <td colSpan={8} className="p-8 text-center text-ink-muted">
                     Nothing calculated for {monthLabel(period)} yet.
                   </td>
                 </tr>
               )}
               {data && data.employees.length > 0 && visiblePeople.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-ink-muted">
+                  <td colSpan={8} className="p-8 text-center text-ink-muted">
                     No one matches that search.
                   </td>
                 </tr>
@@ -328,6 +343,7 @@ function GroupMembers({
           <SortTh label="Achieved" column="achieved" align="right" sort={sort} onSort={onSort} className="p-2" />
           <SortTh label="Achievement" column="achievement" align="right" sort={sort} onSort={onSort} className="p-2" />
           <SortTh label="Qualified" column="qualified" align="right" sort={sort} onSort={onSort} className="p-2" />
+          <SortTh label="Disqualified" column="disqualified" align="right" sort={sort} onSort={onSort} className="p-2" />
           <SortTh label="Incentive" column="incentive" align="right" sort={sort} onSort={onSort} className="p-2" />
         </tr>
       </thead>
@@ -349,6 +365,7 @@ function GroupMembers({
             <td className="p-2 text-right">{count(e.achieved_units)}</td>
             <td className="p-2 text-right font-medium">{percent(e.base_pct)}</td>
             <td className="p-2 text-right">{rupeesShort(e.qualified_revenue)}</td>
+            <td className="p-2 text-right text-disqualified">{rupeesShort(e.disqualified_revenue)}</td>
             <td className="p-2 text-right">{rupeesShort(e.total_incentive)}</td>
           </tr>
         ))}

@@ -201,14 +201,28 @@ def group_by(principal: Principal, period: str, dimension: str) -> list[dict]:
     s = get_settings()
     scope, params = visible_employee_sql(principal)
     col = allowed[dimension]
+    # Sub-manager and RM groups key on an employee ID; carry the person's
+    # name so the page can show who the group is. The name is looked up
+    # outside the caller's scope on purpose: a manager may not be able to see
+    # their own sub-manager's row, but may see the name heading their group.
+    by_person = dimension in ("submanager", "rm")
+    name_sql = "n.full_name" if by_person else "CAST(NULL AS STRING)"
+    name_join = (
+        f"LEFT JOIN {s.table('v_employee_hierarchy')} n ON n.employee_id = g.group_key"
+        if by_person else ""
+    )
     return bq.query(
         f"""
-        SELECT {col} AS group_key, {_METRICS}
-        FROM {s.table('v_incentive_current')} m
-        JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
-        WHERE m.period = @p AND {scope}
-        GROUP BY group_key
-        ORDER BY qualified_revenue DESC
+        SELECT g.*, {name_sql} AS group_name
+        FROM (
+          SELECT {col} AS group_key, {_METRICS}
+          FROM {s.table('v_incentive_current')} m
+          JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
+          WHERE m.period = @p AND {scope}
+          GROUP BY group_key
+        ) g
+        {name_join}
+        ORDER BY g.qualified_revenue DESC
         """,
         {**params, "p": period},
     )
