@@ -31,10 +31,12 @@ def _row_to_employee(r: dict) -> Employee:
 
 
 # Every request resolves its caller from the employee master, which cost a
-# BigQuery round trip on each call. The record is kept for a minute: an edit
-# made here clears it on this instance at once, and other instances see a role
-# change or deactivation within the TTL.
-_LOOKUP_TTL_SECONDS = 60
+# BigQuery round trip on each call. The record is kept for five minutes, the
+# same as dashboard results, so a page opened after a pause does not wait on
+# this lookup before its own queries. An edit made here clears it on this
+# instance at once; other instances see a role change or deactivation within
+# the TTL.
+_LOOKUP_TTL_SECONDS = 300
 _lookup_cache: dict[tuple[str, str], tuple[float, Employee]] = {}
 _lookup_lock = threading.Lock()
 
