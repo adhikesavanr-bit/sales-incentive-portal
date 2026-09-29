@@ -89,6 +89,7 @@ export default function EmployeeDetailPage() {
               <th className="p-3 font-medium">Date</th>
               <th className="p-3 font-medium">Coupon</th>
               <th className="p-3 font-medium">Plan</th>
+              <th className="p-3 font-medium">College</th>
               <th className="p-3 text-right font-medium">Net</th>
               <th className="p-3 font-medium">Status</th>
             </tr>
@@ -99,6 +100,7 @@ export default function EmployeeDetailPage() {
                 <td className="p-3 whitespace-nowrap">{t.payment_date_ist?.slice(0, 10)}</td>
                 <td className="p-3">{t.coupon ?? "—"}</td>
                 <td className="p-3">{t.plan_title ?? "—"}</td>
+                <td className="p-3 max-w-[18rem] truncate">{t.college_name ?? "—"}</td>
                 <td className="p-3 text-right">{rupees(t.net_amount)}</td>
                 <td className="p-3">
                   {t.status === "QUALIFIED" ? (
