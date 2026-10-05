@@ -148,14 +148,16 @@ async def import_coupons(
     """
     month.require_open(period)
     content = await _read(file)
-    agents = coupon_upload.load_agents()
+    agents, agent_warnings, from_people = coupon_upload.agents_for_upload(period)
     if not agents:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "Upload the coupon agent list first: it decides which coupons are field coupons.",
         )
     try:
-        built = coupon_upload.build(coupon_upload.parse_report(file.filename, content), agents, period)
+        built = coupon_upload.build(coupon_upload.parse_report(file.filename, content), agents,
+                                    period, from_people=from_people)
+        built["warnings"] = agent_warnings + built["warnings"]
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - an unreadable file is the caller's to fix

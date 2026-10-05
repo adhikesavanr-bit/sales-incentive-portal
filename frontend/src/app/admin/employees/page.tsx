@@ -186,7 +186,8 @@ export default function PeoplePage() {
                      onChange={(e) => setEditing({ ...editing, email: e.target.value })}
                      className="inp" placeholder="name@marrowmed.com" />
             </Field>
-            <Field label="Coupon agent" hint="The initial that prefixes their coupons">
+            <Field label="Coupon initial"
+                   hint="The sales master code on their coupons, e.g. ABJ. Their sales are only counted when this is set.">
               <input value={editing.initial ?? ""}
                      onChange={(e) => setEditing({ ...editing, initial: e.target.value.toUpperCase() })}
                      className="inp" placeholder="PND" />

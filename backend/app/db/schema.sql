@@ -389,7 +389,7 @@ CLUSTER BY user_email, action;
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW `${PROJECT}.${DATASET}.v_employee_hierarchy` AS
 SELECT
-  e.employee_id, e.full_name, e.email, e.role, e.designation,
+  e.employee_id, e.full_name, e.initial, e.email, e.role, e.designation,
   e.region, e.zone, e.vertical, e.is_active, e.exit_date,
   h.submanager_id, h.rm_id, h.zm_id, h.business_head_id
 FROM `${PROJECT}.${DATASET}.employee_master` e

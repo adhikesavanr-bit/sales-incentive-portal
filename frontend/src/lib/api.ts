@@ -532,6 +532,17 @@ export interface RecalcResult {
   total_incentive: number;
   net_payable: number;
   accumulation: number;
+  // People with an approved target but no sales linked to them this run.
+  no_sales_linked: NoSalesLinked[];
+}
+
+export interface NoSalesLinked {
+  employee_id: string;
+  full_name: string | null;
+  initial: string | null;
+  target_units: number;
+  sales_on_their_codes: number;
+  reason: string;
 }
 
 export interface TargetRow {

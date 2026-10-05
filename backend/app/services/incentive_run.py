@@ -21,7 +21,7 @@ from app.models.schemas import (
     SlabScope,
     Target,
 )
-from app.services import coupon_rules, coupons as coupon_service
+from app.services import coupon_rules, coupon_upload, coupons as coupon_service
 from app.services import employees as employee_service
 from app.services import source_tables
 
@@ -155,8 +155,70 @@ def next_version(period: str) -> int:
     return int(rows[0]["v"]) + 1 if rows else 1
 
 
-def run(period: str, calculated_by: str) -> dict[str, IncentiveBreakdown]:
-    """Full recalculation for a period. Writes a new calculation version."""
+def unlinked_targets(
+    period: str,
+    breakdowns: dict[str, IncentiveBreakdown],
+    targets: dict[str, Target],
+    employees: dict,
+    signatures: list,
+    transactions: list[SalesTransaction],
+    agent_codes: dict[str, set[str]],
+) -> list[dict]:
+    """People with an approved target but no sales linked to them, and why.
+
+    Sep 2026: three new BDEs had People records and approved targets but were
+    not on the coupon agent list, so the run gave them 0 sales and Rs 0 with
+    nothing on screen to say so. This names each such person and the likely
+    cause, so it is seen before the month is approved.
+    """
+    coupons: dict[str, int] = {}
+    for sig in signatures:
+        coupons[sig.employee_id] = coupons.get(sig.employee_id, 0) + 1
+    sales_by_code: dict[str, int] = {}
+    for t in transactions:
+        code = (t.coupon_agent or "").strip().upper()
+        if code:
+            sales_by_code[code] = sales_by_code.get(code, 0) + 1
+
+    out = []
+    for emp_id, target in sorted(targets.items()):
+        b = breakdowns.get(emp_id)
+        if not target.target_units or (b is not None and b.gross_units):
+            continue
+        emp = employees.get(emp_id)
+        codes = set(agent_codes.get(emp_id, set()))
+        if emp is not None and emp.initial:
+            codes.add(emp.initial.upper())
+        shown = "/".join(sorted(codes))
+        on_codes = sum(sales_by_code.get(c, 0) for c in codes)
+        if not codes:
+            reason = ("No coupon initial. Add it in People, upload this month's coupon "
+                      "report again, then recalculate.")
+        elif not coupons.get(emp_id) and on_codes:
+            reason = (f"{on_codes} sales this month are on {shown} coupons, but none of "
+                      f"those coupons is linked to them. Upload this month's coupon report "
+                      f"again, then recalculate.")
+        elif not coupons.get(emp_id):
+            reason = f"No {shown} coupons in this month's coupon report."
+        else:
+            reason = f"{coupons[emp_id]} {shown} coupon(s) this month, but no sales on them."
+        out.append({
+            "employee_id": emp_id,
+            "full_name": emp.full_name if emp else None,
+            "initial": shown or None,
+            "target_units": target.target_units,
+            "sales_on_their_codes": on_codes,
+            "reason": reason,
+        })
+    return out
+
+
+def run(period: str, calculated_by: str,
+        warnings: list[dict] | None = None) -> dict[str, IncentiveBreakdown]:
+    """Full recalculation for a period. Writes a new calculation version.
+
+    Pass a list as `warnings` to have it filled with `unlinked_targets`.
+    """
     s = get_settings()
     cfg = IncentiveConfig(
         arpu=s.default_arpu,
@@ -189,6 +251,12 @@ def run(period: str, calculated_by: str) -> dict[str, IncentiveBreakdown]:
     breakdowns = calculate_period(
         qres.transactions, period, employees, targets, adjustments, cfg, version
     )
+    if warnings is not None:
+        codes: dict[str, set[str]] = {}
+        for a in coupon_upload.load_agents().values():
+            codes.setdefault(a["employee_id"], set()).add(a["initial"].upper())
+        warnings.extend(unlinked_targets(
+            period, breakdowns, targets, employees, signatures, transactions, codes))
     src = source_tables.resolve(period)
     source_label = src.label if src else "uploaded raw_sales"
 

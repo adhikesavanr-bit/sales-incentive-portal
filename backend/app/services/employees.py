@@ -116,6 +116,43 @@ def is_in_scope(employee_id: str, scope_sql: str, params: dict) -> bool:
     return bool(rows)
 
 
+def normalise_initial(employee: Employee) -> None:
+    """Coupon initials are matched upper-case; a blank one means none."""
+    code = (employee.initial or "").strip().upper()
+    employee.initial = code or None
+
+
+def initial_conflict(employee: Employee) -> str | None:
+    """Why this person's coupon initial cannot be used, or None if it can.
+
+    The initial decides who a coupon's sales belong to, so one code must
+    never point at two people: not two people in People, and not a person
+    and a different employee on the uploaded agent list.
+    """
+    if not employee.initial:
+        return None
+    s = get_settings()
+    params = {"code": employee.initial, "id": employee.employee_id}
+    people = bq.query(
+        f"SELECT employee_id, full_name FROM {s.table('v_employee_hierarchy')} "
+        "WHERE UPPER(initial) = @code AND employee_id != @id AND is_active LIMIT 1",
+        params,
+    )
+    if people:
+        p = people[0]
+        return (f"Coupon initial {employee.initial} already belongs to "
+                f"{p['full_name']} ({p['employee_id']}).")
+    agents = bq.query(
+        f"SELECT employee_id FROM {s.table('coupon_agents')} "
+        "WHERE UPPER(initial) = @code AND employee_id != @id LIMIT 1",
+        params,
+    )
+    if agents:
+        return (f"Coupon initial {employee.initial} is on the coupon agent list for "
+                f"{agents[0]['employee_id']}.")
+    return None
+
+
 def upsert(employee: Employee, updated_by: str) -> None:
     """Close the current row and open a new one (SCD-2)."""
     s = get_settings()

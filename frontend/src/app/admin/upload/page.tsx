@@ -265,6 +265,30 @@ export default function UploadPage() {
             <Fig label="Payable now" value={rupeesShort(recalc.net_payable)} />
           </dl>
         )}
+        {recalc && recalc.no_sales_linked?.length > 0 && (
+          <div role="alert" className="mt-6 rounded-card bg-disqualified-wash p-4 text-sm">
+            <p className="font-semibold text-disqualified">
+              {recalc.no_sales_linked.length === 1
+                ? "1 person has a target but no sales linked to them"
+                : `${recalc.no_sales_linked.length} people have a target but no sales linked to them`}
+            </p>
+            <p className="mt-1 text-ink-muted">
+              They are paid nothing this run. Fix the cause, then recalculate before approving.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {recalc.no_sales_linked.map((w) => (
+                <li key={w.employee_id}>
+                  <span className="font-medium">
+                    {w.full_name ?? w.employee_id} ({w.employee_id}
+                    {w.initial ? `, ${w.initial}` : ""})
+                  </span>
+                  <span className="text-ink-muted"> · target {count(w.target_units)} · </span>
+                  {w.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
       {dialog.element}
     </AppShell>

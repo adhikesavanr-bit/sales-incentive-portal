@@ -62,6 +62,13 @@ def assignable_roles(
     ]
 
 
+def _check_initial(employee: Employee) -> None:
+    employee_service.normalise_initial(employee)
+    problem = employee_service.initial_conflict(employee)
+    if problem:
+        raise HTTPException(status.HTTP_409_CONFLICT, problem)
+
+
 @router.post("/employees", status_code=status.HTTP_201_CREATED)
 def create_employee(
     employee: Employee,
@@ -73,6 +80,7 @@ def create_employee(
             status.HTTP_409_CONFLICT,
             f"{employee.employee_id} already exists. Edit it instead.",
         )
+    _check_initial(employee)
     employee_service.upsert(employee, principal.email)
     employee_service.set_hierarchy(employee, principal.email)
     audit.record(
@@ -94,6 +102,7 @@ def update_employee(
     if existing is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No employee {employee_id}.")
     employee.employee_id = employee_id
+    _check_initial(employee)
     employee_service.upsert(employee, principal.email)
     employee_service.set_hierarchy(employee, principal.email)
     audit.record(
@@ -569,7 +578,8 @@ def recalculate(
     principal: Principal = Depends(require(Permission.RECALCULATE)),
 ):
     month.require_open(period)
-    breakdowns = incentive_run.run(period, principal.email)
+    warnings: list[dict] = []
+    breakdowns = incentive_run.run(period, principal.email, warnings=warnings)
     total = sum(b.total_incentive for b in breakdowns.values())
     payable = sum(b.net_payable for b in breakdowns.values())
     version = next(iter(breakdowns.values())).calculation_version if breakdowns else 0
@@ -577,7 +587,8 @@ def recalculate(
         principal.email, "INCENTIVE_RECALCULATE", entity_type="period",
         affected_record=period,
         new_value={"employees": len(breakdowns), "total_incentive": total,
-                   "version": version},
+                   "version": version,
+                   "no_sales_linked": [w["employee_id"] for w in warnings]},
         reason=reason,
     )
     return {
@@ -587,6 +598,7 @@ def recalculate(
         "total_incentive": total,
         "net_payable": payable,
         "accumulation": total - payable,
+        "no_sales_linked": warnings,
     }
 
 

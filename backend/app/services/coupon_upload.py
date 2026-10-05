@@ -115,6 +115,56 @@ def load_agents() -> dict[str, dict]:
             for r in bq.query(f"SELECT * FROM {s.table('coupon_agents')}")}
 
 
+def people_agents() -> list[dict]:
+    """People with a coupon initial, as agent rows (zone = their region)."""
+    s = get_settings()
+    return bq.query(
+        f"SELECT employee_id, full_name, initial, region, is_active, exit_date "
+        f"FROM {s.table('v_employee_hierarchy')} WHERE initial IS NOT NULL"
+    )
+
+
+def merge_agents(uploaded: dict[str, dict], people: list[dict], period: str
+                 ) -> tuple[dict[str, dict], list[str], dict[str, str]]:
+    """The agent list for a coupon upload: the uploaded list, plus the coupon
+    initial set on each person in People wherever the list has no row for it.
+
+    Sep 2026: three new BDEs (ABJ, AKG, PJH) were added in People with their
+    initials, but only the uploaded agent list was read, so their 149 sales
+    were left unattributed and they were paid nothing. The uploaded list still
+    wins: it also carries Inside Sales and leavers, who are not in People.
+
+    Returns (agents, warnings, added) where `added` maps initial -> employee_id
+    for the codes that came from People.
+    """
+    agents = dict(uploaded)
+    warnings: list[str] = []
+    added: dict[str, str] = {}
+    start = f"{period}-01"
+    for p in people:
+        code = (p.get("initial") or "").strip().upper()
+        if not code:
+            continue
+        exit_date = p.get("exit_date")
+        if not p.get("is_active", True) and exit_date and str(exit_date) < start:
+            continue                      # left before this month
+        have = agents.get(code)
+        if have is None:
+            agents[code] = {"initial": code, "employee_id": p["employee_id"],
+                            "agent_name": p.get("full_name"), "zone": p.get("region")}
+            added[code] = p["employee_id"]
+        elif have["employee_id"] != p["employee_id"]:
+            warnings.append(
+                f"{p['employee_id']} has coupon initial {code} in People, but the agent "
+                f"list gives {code} to {have['employee_id']}. The agent list was used."
+            )
+    return agents, warnings, added
+
+
+def agents_for_upload(period: str) -> tuple[dict[str, dict], list[str], dict[str, str]]:
+    return merge_agents(load_agents(), people_agents(), period)
+
+
 def agents_summary() -> dict:
     s = get_settings()
     r = bq.query(
@@ -150,8 +200,13 @@ def parse_report(filename: str, content: bytes) -> pd.DataFrame:
     return df
 
 
-def build(df: pd.DataFrame, agents: dict[str, dict], period: str) -> dict:
-    """Coupon master rows for the report, and a summary of what was left out."""
+def build(df: pd.DataFrame, agents: dict[str, dict], period: str,
+          from_people: dict[str, str] | None = None) -> dict:
+    """Coupon master rows for the report, and a summary of what was left out.
+
+    `from_people` names the codes whose owner came from People rather than the
+    uploaded agent list, so the preview can say so.
+    """
     rows, errors, warnings = [], [], []
     excluded: Counter[str] = Counter()
     seen: set[str] = set()
@@ -212,6 +267,12 @@ def build(df: pd.DataFrame, agents: dict[str, dict], period: str) -> dict:
         )
     for size in sorted(odd_sizes):
         warnings.append(f"Group size {size} has no minimum-sales rule; its coupons use the default.")
+
+    for code, emp in sorted((from_people or {}).items()):
+        n = sum(1 for r in rows if r["initial"] == code)
+        if n:
+            warnings.append(f"{n} coupon(s) on {code} go to {emp} by the initial set in "
+                            "People (not on the uploaded agent list).")
 
     owners = Counter(r["employee_id"] for r in rows)
     return {
