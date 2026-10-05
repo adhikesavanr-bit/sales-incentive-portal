@@ -52,6 +52,15 @@ def get_status(period: str) -> MonthStatus:
     return current
 
 
+def label(period: str) -> str:
+    """'2026-09' as 'September 2026'."""
+    return datetime.strptime(period, "%Y-%m").strftime("%B %Y")
+
+
+def not_published_message(period: str) -> str:
+    return f"{label(period)} not published yet"
+
+
 def is_published(period: str) -> bool:
     return get_status(period) in PUBLISHED
 

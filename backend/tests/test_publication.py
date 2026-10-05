@@ -48,6 +48,7 @@ def test_the_sales_line_sees_nothing_before_approval(status, role, s):
     p = who(role)
     out = dash.my_dashboard(period="2026-09", principal=p)
     assert out["status"] == "NOT_PUBLISHED" and "total_incentive" not in out
+    assert out["message"] == "September 2026 not published yet"
     assert dash.my_sales(period="2026-09", limit=200, offset=0, principal=p) == []
     assert dash.my_coupons(period="2026-09", principal=p) == []
     other = dash.employee_dashboard("NHP845", period="2026-09", principal=p)
@@ -65,7 +66,7 @@ def test_exports_are_refused_before_approval(status, role):
                  lambda: exports.export_report("incentive", period="2026-09", principal=p)):
         with pytest.raises(HTTPException) as e:
             call()
-        assert e.value.status_code == 404 and "not been published" in e.value.detail
+        assert e.value.status_code == 404 and e.value.detail == "September 2026 not published yet"
 
 
 def test_consolidated_is_gated_too(status):

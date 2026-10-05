@@ -67,8 +67,7 @@ def _not_published(employee_id: str, period: str) -> dict:
         "employee_id": employee_id,
         "status": "NOT_PUBLISHED",
         "month_status": month.get_status(period).value,
-        "message": "This month's incentive has not been published yet. "
-                   "It appears here once Finance approves it.",
+        "message": month.not_published_message(period),
     }
 
 

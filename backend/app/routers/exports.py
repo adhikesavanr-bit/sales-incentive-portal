@@ -10,7 +10,7 @@ from fastapi.responses import Response, StreamingResponse
 from app.auth.deps import require
 from app.auth.rbac import Permission, Principal
 from app.routers.dashboards import _authorise_target, can_see_month
-from app.services import audit, dashboards, statement_pdf
+from app.services import audit, dashboards, month, statement_pdf
 from app.services import employees as employee_service
 
 router = APIRouter(prefix="/api/export", tags=["export"])
@@ -41,7 +41,7 @@ def _require_published(principal: Principal, period: str) -> None:
     if not can_see_month(principal, period):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
-            "This month's incentive has not been published yet.",
+            month.not_published_message(period),
         )
 
 
