@@ -52,11 +52,13 @@ def can_see_month(principal: Principal, period: str) -> bool:
     """Whether this caller may see the period's results yet.
 
     A month is published when it is APPROVED (or LOCKED). Until then only the
-    people who calculate and review it see figures: Finance and super admins,
-    and a super admin using "view as" to check a person's page. Everyone else
-    gets the "not published yet" state, on every page and export alike.
+    people who calculate and review it see figures: Finance and super admins.
+    Everyone else gets the "not published yet" state, on every page and export
+    alike. "View as" shows exactly what that person sees, so an admin viewing
+    as a BDE gets the BDE's "not published yet" too: the permissions are the
+    viewed person's, not the admin's.
     """
-    if principal.can(Permission.VIEW_UNPUBLISHED) or principal.impersonator:
+    if principal.can(Permission.VIEW_UNPUBLISHED):
         return True
     return month.is_published(period)
 

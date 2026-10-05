@@ -1,8 +1,8 @@
 """A month's results reach the sales line only once the month is approved.
 
-Until then Finance and super admins (and a super admin using "view as") see
-everything, so they can review it; everyone else sees "not published yet" on
-every page and export.
+Until then Finance and super admins see everything, so they can review it;
+everyone else, and "view as" anyone else, sees "not published yet" on every
+page and export.
 """
 from __future__ import annotations
 
@@ -91,9 +91,11 @@ def test_reviewers_see_it_before_approval_marked_unpublished(status, role):
     assert roll["employees"] and roll["unpublished"] is True
 
 
-def test_a_super_admin_viewing_as_a_bde_still_sees_it(status):
+def test_view_as_a_bde_shows_what_the_bde_sees(status):
     p = who(Role.BDE, impersonator="admin@dailyrounds.org")
-    assert dash.my_dashboard(period="2026-09", principal=p)["total_incentive"] == 12345.0
+    out = dash.my_dashboard(period="2026-09", principal=p)
+    assert out["status"] == "NOT_PUBLISHED"
+    assert out["message"] == "September 2026 not published yet"
 
 
 def test_only_finance_and_super_admin_hold_the_permission():
