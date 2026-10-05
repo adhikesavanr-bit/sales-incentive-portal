@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { UnpublishedBanner } from "@/components/UnpublishedBanner";
 import { CouponAnalysis } from "@/components/CouponAnalysis";
 import { DownloadButton } from "@/components/DownloadButton";
 import { api, type Breakdown, type Transaction } from "@/lib/api";
@@ -53,6 +54,8 @@ export default function EmployeeDetailPage() {
           </DownloadButton>
         )}
       </header>
+
+      {data?.unpublished && <UnpublishedBanner period={period} monthStatus={data.month_status} />}
 
       {data?.status && (
         <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">

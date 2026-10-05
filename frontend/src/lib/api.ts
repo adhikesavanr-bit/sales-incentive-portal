@@ -388,7 +388,9 @@ export interface Me {
 }
 
 export interface Breakdown {
-  status?: "NOT_CALCULATED" | "NO_SALES";
+  status?: "NOT_CALCULATED" | "NO_SALES" | "NOT_PUBLISHED";
+  // Set for Finance / admins viewing a month the team cannot see yet.
+  unpublished?: boolean;
   message?: string;
   month_status?: MonthStatus;
   employee_id: string;
@@ -422,7 +424,10 @@ export interface Breakdown {
 
 /** Everyone in the caller's scope, added up for the period. */
 export interface Consolidated {
-  status?: "NOT_CALCULATED" | "NO_SALES";
+  status?: "NOT_CALCULATED" | "NO_SALES" | "NOT_PUBLISHED";
+  month_status?: MonthStatus;
+  // Set for Finance / admins viewing a month the team cannot see yet.
+  unpublished?: boolean;
   message?: string;
   period: string;
   scope_label: string;
@@ -483,6 +488,10 @@ export interface Transaction {
 export interface Rollup {
   period: string;
   scope: string;
+  status?: "NOT_PUBLISHED";
+  message?: string;
+  month_status?: MonthStatus;
+  unpublished?: boolean;
   summary: Record<string, number>;
   employees: EmployeeMetricRow[];
   // group_name is set when the group is a person (sub-manager, RM).

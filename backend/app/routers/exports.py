@@ -9,7 +9,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.auth.deps import require
 from app.auth.rbac import Permission, Principal
-from app.routers.dashboards import _authorise_target
+from app.routers.dashboards import _authorise_target, can_see_month
 from app.services import audit, dashboards, statement_pdf
 from app.services import employees as employee_service
 
@@ -37,6 +37,14 @@ def _csv(rows: list[dict], filename: str) -> StreamingResponse:
     )
 
 
+def _require_published(principal: Principal, period: str) -> None:
+    if not can_see_month(principal, period):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "This month's incentive has not been published yet.",
+        )
+
+
 # Declared before /{report}, which would otherwise swallow "statement".
 @router.get("/statement")
 def export_statement(
@@ -46,6 +54,7 @@ def export_statement(
 ):
     """One person's monthly statement as a PDF: their own, or anyone in scope."""
     target = _authorise_target(principal, employee_id)
+    _require_published(principal, period)
     row = dashboards.own(target, period)
     if row is None:
         raise HTTPException(
@@ -84,6 +93,7 @@ def export_report(
             status.HTTP_404_NOT_FOUND,
             f"Unknown report. Choose one of: {', '.join(REPORTS)}.",
         )
+    _require_published(principal, period)
     # A BDE's scope predicate resolves to their own row, so a BDE calling the
     # company-wide export gets a one-row file rather than a 403.
     rows = dashboards.team_rows(principal, period)

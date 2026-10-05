@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Fragment, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { UnpublishedBanner } from "@/components/UnpublishedBanner";
 import { DownloadButton } from "@/components/DownloadButton";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import {
@@ -133,9 +134,11 @@ export default function TeamPage() {
         </div>
         <div className="flex items-center gap-2">
           <PeriodPicker value={period} onChange={setPeriod} />
-          <DownloadButton onDownload={() => api.exportCsv("performance", period)}>
-            Export CSV
-          </DownloadButton>
+          {!data?.status && (
+            <DownloadButton onDownload={() => api.exportCsv("performance", period)}>
+              Export CSV
+            </DownloadButton>
+          )}
         </div>
       </header>
 
@@ -145,6 +148,12 @@ export default function TeamPage() {
         </p>
       )}
 
+      {data?.unpublished && <UnpublishedBanner period={period} monthStatus={data.month_status} />}
+
+      {data?.status ? (
+        <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">{data.message}</div>
+      ) : (
+      <>
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi label="Headcount" value={count(s.headcount as number)}
              sub="with sales this month" />
@@ -313,6 +322,8 @@ export default function TeamPage() {
             </tbody>
           </table>
         </section>
+      )}
+      </>
       )}
     </AppShell>
   );

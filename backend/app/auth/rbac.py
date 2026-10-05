@@ -32,6 +32,9 @@ class Permission(str, Enum):
     REOPEN_MONTH = "REOPEN_MONTH"
     EXPORT_SCOPED = "EXPORT_SCOPED"
     VIEW_AUDIT = "VIEW_AUDIT"
+    # See a month's results before it is approved: the people who calculate
+    # and review it. Everyone else sees a month only once it is APPROVED.
+    VIEW_UNPUBLISHED = "VIEW_UNPUBLISHED"
 
 
 _BDE = {Permission.VIEW_OWN, Permission.VIEW_TARGETS, Permission.EXPORT_SCOPED}
@@ -58,6 +61,7 @@ _FIN = _BH | _EDIT_TARGETS | {
     Permission.RECALCULATE,
     Permission.LOCK_MONTH,
     Permission.VIEW_AUDIT,
+    Permission.VIEW_UNPUBLISHED,
 }
 
 ROLE_PERMISSIONS: dict[Role, set[Permission]] = {

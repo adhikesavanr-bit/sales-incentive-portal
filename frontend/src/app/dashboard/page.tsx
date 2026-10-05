@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { UnpublishedBanner } from "@/components/UnpublishedBanner";
 import { CouponAnalysis } from "@/components/CouponAnalysis";
 import { DownloadButton } from "@/components/DownloadButton";
 import { PayoutHeadline } from "@/components/PayoutHeadline";
@@ -103,6 +104,10 @@ export default function DashboardPage() {
         <p role="alert" className="mt-6 panel bg-disqualified-wash p-4 text-sm text-disqualified">
           {error}
         </p>
+      )}
+
+      {mode === "me" && data?.unpublished && (
+        <UnpublishedBanner period={period} monthStatus={data.month_status} />
       )}
 
       {mode === "me" && data?.status && (
@@ -275,6 +280,7 @@ function ConsolidatedView({ period }: { period: string }) {
 
   return (
     <>
+      {data.unpublished && <UnpublishedBanner period={period} monthStatus={data.month_status} />}
       <p className="mt-6 text-sm text-ink-muted">
         {data.scope_label} · {count(data.people)} people with figures this month
       </p>

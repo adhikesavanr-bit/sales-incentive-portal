@@ -289,8 +289,13 @@ class TestEmptyDashboardState:
 
     def test_every_published_status_reports_no_sales(self, monkeypatch):
         from app.models.schemas import MonthStatus
-        for st in (MonthStatus.UNDER_REVIEW, MonthStatus.APPROVED, MonthStatus.LOCKED):
+        for st in (MonthStatus.APPROVED, MonthStatus.LOCKED):
             assert self._state(monkeypatch, st)["status"] == "NO_SALES"
+
+    def test_a_month_under_review_is_not_published_yet(self, monkeypatch):
+        # A month is published from approval onwards, not from review.
+        from app.models.schemas import MonthStatus
+        assert self._state(monkeypatch, MonthStatus.UNDER_REVIEW)["status"] == "NOT_CALCULATED"
 
     def test_the_month_status_is_always_reported(self, monkeypatch):
         from app.models.schemas import MonthStatus
@@ -459,6 +464,8 @@ class TestStatementExport:
         monkeypatch.setattr(exports.audit, "record", lambda *a, **k: None)
         monkeypatch.setattr(dash_router.employee_service, "is_in_scope",
                             lambda t, s, p: in_scope)
+        from app.models.schemas import MonthStatus
+        monkeypatch.setattr(dash_router.month, "get_status", lambda p: MonthStatus.APPROVED)
         return exports
 
     def test_a_bde_gets_their_own_statement(self, monkeypatch):

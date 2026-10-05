@@ -1,6 +1,8 @@
 """Month lifecycle: OPEN -> UNDER_REVIEW -> APPROVED -> LOCKED."""
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -17,14 +19,41 @@ _ALLOWED = {
 }
 
 
+# Every dashboard request now asks whether its month is published, so the
+# answer is kept briefly. A change made here clears it on this instance at
+# once; other instances follow within the TTL.
+_STATUS_TTL_SECONDS = 30
+_status_cache: dict[str, tuple[float, MonthStatus]] = {}
+_status_lock = threading.Lock()
+
+# A month's results are shown to the sales line only from approval onwards.
+PUBLISHED = frozenset({MonthStatus.APPROVED, MonthStatus.LOCKED})
+
+
+def forget_statuses() -> None:
+    with _status_lock:
+        _status_cache.clear()
+
+
 def get_status(period: str) -> MonthStatus:
+    with _status_lock:
+        hit = _status_cache.get(period)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
     s = get_settings()
     rows = bq.query(
         f"SELECT status FROM {s.table('month_status')} WHERE period = @p "
         "ORDER BY changed_at DESC LIMIT 1",
         {"p": period},
     )
-    return MonthStatus(rows[0]["status"]) if rows else MonthStatus.OPEN
+    current = MonthStatus(rows[0]["status"]) if rows else MonthStatus.OPEN
+    with _status_lock:
+        _status_cache[period] = (time.monotonic() + _STATUS_TTL_SECONDS, current)
+    return current
+
+
+def is_published(period: str) -> bool:
+    return get_status(period) in PUBLISHED
 
 
 def require_open(period: str) -> None:
@@ -56,4 +85,5 @@ def transition(period: str, to: MonthStatus, changed_by: str, reason: str) -> Mo
         "changed_at": datetime.now(timezone.utc).isoformat(),
         "reason": reason,
     }])
+    forget_statuses()
     return to
