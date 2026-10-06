@@ -324,6 +324,8 @@ export const api = {
 
   assignableRoles: () => request<RoleOption[]>("/api/employees/roles"),
 
+  regionDirectory: () => request<RegionDirectory>("/api/employees/regions"),
+
   // The API reads `reason` from the query string, not the body. Sending it in
   // the body made every edit fail with a 422 ("reason: field required").
   createEmployee: (body: EmployeeRow, reason: string) =>
@@ -664,6 +666,29 @@ export interface EmployeeRow {
   zm_id?: string | null;
   is_active: boolean;
   exit_date?: string | null;
+}
+
+/** Regions and zones as they stand today, with who leads each. */
+export interface RegionInfo {
+  region: string;
+  zone: string | null;
+  rm_id: string | null;
+  rm_name: string | null;
+  zm_id: string | null;
+  zm_name: string | null;
+  people: number;
+}
+
+export interface ZoneInfo {
+  zone: string;
+  zm_id: string | null;
+  zm_name: string | null;
+  people: number;
+}
+
+export interface RegionDirectory {
+  regions: RegionInfo[];
+  zones: ZoneInfo[];
 }
 
 export interface RoleOption {

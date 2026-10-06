@@ -299,6 +299,17 @@ CLUSTER BY period, employee_id, region;
 -- ---------------------------------------------------------------------------
 -- Month lifecycle, overrides, uploads, audit.
 -- ---------------------------------------------------------------------------
+-- One row per successful write through the API. Every instance polls the
+-- newest row so its in-memory caches never lag another instance's write by
+-- more than a few seconds. Rows are only needed briefly, so they expire.
+CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.cache_events` (
+  at    TIMESTAMP NOT NULL,
+  path  STRING,
+  `by`  STRING
+)
+PARTITION BY DATE(at)
+OPTIONS (partition_expiration_days = 7);
+
 CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.month_status` (
   period              STRING NOT NULL,
   status              STRING NOT NULL,  -- OPEN / UNDER_REVIEW / APPROVED / LOCKED

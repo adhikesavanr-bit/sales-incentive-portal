@@ -10,7 +10,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import get_settings
 from app.routers import admin, auth, client_errors, dashboards, exports, sales
-from app.services import dashboards as dashboard_service
+from starlette.concurrency import run_in_threadpool
+
+from app.services import cache_sync
 
 settings = get_settings()
 logging.basicConfig(level=settings.log_level)
@@ -50,11 +52,22 @@ _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 async def forget_cached_results(request: Request, call_next):
-    """A successful write may change any dashboard figure, so drop the cache."""
+    """Keep cached figures in step with writes, on every instance.
+
+    Before serving, an instance checks (at most every few seconds) whether any
+    instance has written since it last looked, and if so drops its caches.
+    After a successful write it drops its own and records the write for the
+    others. Without the shared record, a People edit made on one instance did
+    not show on My team for up to five minutes.
+    """
+    path = request.url.path
+    if path.startswith("/api/"):
+        await run_in_threadpool(cache_sync.check)
     response = await call_next(request)
     if (request.method in _WRITE_METHODS and response.status_code < 400
-            and not request.url.path.startswith(("/api/auth/", "/api/client-errors"))):
-        dashboard_service.forget_results()
+            and path.startswith("/api/")
+            and not path.startswith(("/api/auth/", "/api/client-errors"))):
+        await run_in_threadpool(cache_sync.record_write, path)
     return response
 
 

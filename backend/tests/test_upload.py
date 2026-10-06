@@ -236,7 +236,7 @@ class TestSqlStatementSplitting:
         sql = (pathlib.Path(__file__).resolve().parents[1] / "app/db/schema.sql").read_text()
         sql = sql.replace("${PROJECT}", "p").replace("${DATASET}", "d").replace("${LOCATION}", "US")
         stmts = split_statements(sql)
-        assert len(stmts) == 21
+        assert len(stmts) == 22
         for s in stmts:
             assert s.count("(") == s.count(")"), s.splitlines()[0]
 
@@ -287,6 +287,7 @@ class TestSchemaPartitioning:
                 name = re.search(r"`p\.d\.(\w+)`", s).group(1)
                 partitioned[name] = next(l.strip() for l in s.splitlines() if "PARTITION BY" in l)
         assert partitioned == {
+            "cache_events": "PARTITION BY DATE(at)",
             "raw_sales": "PARTITION BY DATE(payment_date_ist)",
             "audit_log": "PARTITION BY DATE(occurred_at)",
         }

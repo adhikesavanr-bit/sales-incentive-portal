@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { useFormDialog } from "@/components/FormDialog";
-import { api, startViewAs, type EmployeeRow, type RoleOption } from "@/lib/api";
+import {
+  api, startViewAs, type EmployeeRow, type RegionDirectory, type RoleOption,
+} from "@/lib/api";
 
 /**
  * The people master. Everything downstream keys off this list: targets, team
@@ -23,6 +25,9 @@ const BLANK: EmployeeRow = {
 export default function PeoplePage() {
   const [rows, setRows] = useState<EmployeeRow[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [dir, setDir] = useState<RegionDirectory>({ regions: [], zones: [] });
+  // Says where Reports to / Zonal manager came from after picking a region.
+  const [filledFrom, setFilledFrom] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<EmployeeRow | null>(null);
@@ -40,6 +45,36 @@ export default function PeoplePage() {
 
   function load() {
     api.employees(showInactive).then(setRows).catch((e) => setError(e.message));
+    api.regionDirectory().then(setDir).catch(() => setDir({ regions: [], zones: [] }));
+  }
+
+  const nameOf = (id?: string | null) =>
+    (id && rows.find((r) => r.employee_id === id)?.full_name) || null;
+
+  // Picking a region brings its zone, RM and zonal manager with it, so a move
+  // between regions no longer leaves the person in their old manager's team.
+  function pickRegion(region: string, fromList: boolean) {
+    const info = fromList ? dir.regions.find((r) => r.region === region) : undefined;
+    setEditing((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, region };
+      if (info) {
+        if (info.zone) next.zone = info.zone;
+        if (info.zm_id) next.zm_id = info.zm_id;
+        // The region's own RM does not report to themselves.
+        if (info.rm_id) next.rm_id = info.rm_id === prev.employee_id ? null : info.rm_id;
+      }
+      return next;
+    });
+    setFilledFrom(info ? region : null);
+  }
+
+  function pickZone(zone: string, fromList: boolean) {
+    const info = fromList ? dir.zones.find((z) => z.zone === zone) : undefined;
+    setEditing((prev) => {
+      if (!prev) return prev;
+      return { ...prev, zone, zm_id: info?.zm_id ?? prev.zm_id };
+    });
   }
   useEffect(load, [showInactive]);
 
@@ -59,6 +94,7 @@ export default function PeoplePage() {
   function startEditing(row: EmployeeRow, asNew: boolean) {
     setEditing({ ...row });
     setIsNew(asNew);
+    setFilledFrom(null);
     setReason("");
     setError(null);
     setNotice(null);
@@ -197,15 +233,19 @@ export default function PeoplePage() {
                      onChange={(e) => setEditing({ ...editing, designation: e.target.value })}
                      className="inp" placeholder="BDE / SBM / RM" />
             </Field>
-            <Field label="Region">
-              <input value={editing.region ?? ""}
-                     onChange={(e) => setEditing({ ...editing, region: e.target.value })}
-                     className="inp" placeholder="R1-Ajeet" />
+            <Field label="Region" hint="Brings the region's zone, RM and zonal manager with it">
+              <PickOrType key={`region-${editing.employee_id}-${isNew}`}
+                          value={editing.region ?? ""}
+                          options={dir.regions.map((r) => r.region)}
+                          newLabel="New region…" placeholder="R15-Name"
+                          onPick={pickRegion} />
             </Field>
-            <Field label="Zone">
-              <input value={editing.zone ?? ""}
-                     onChange={(e) => setEditing({ ...editing, zone: e.target.value })}
-                     className="inp" />
+            <Field label="Zone" hint="Brings the zone's zonal manager with it">
+              <PickOrType key={`zone-${editing.employee_id}-${isNew}`}
+                          value={editing.zone ?? ""}
+                          options={dir.zones.map((z) => z.zone)}
+                          newLabel="New zone…" placeholder="Zone name"
+                          onPick={pickZone} />
             </Field>
             <Field label="Access" hint="What they can see and do in this app">
               <select value={editing.role}
@@ -216,12 +256,25 @@ export default function PeoplePage() {
                 ))}
               </select>
             </Field>
-            <Field label="Reports to" hint="Employee ID of their manager">
+            <Field label="Reports to"
+                   hint={nameOf(editing.rm_id) ?? "Employee ID of their manager (RM)"}>
               <input value={editing.rm_id ?? ""}
-                     onChange={(e) => setEditing({ ...editing, rm_id: e.target.value || null })}
+                     onChange={(e) => setEditing({ ...editing, rm_id: e.target.value.trim().toUpperCase() || null })}
                      className="inp" placeholder="NHP212" />
             </Field>
+            <Field label="Zonal manager"
+                   hint={nameOf(editing.zm_id) ?? "Employee ID of their zonal manager"}>
+              <input value={editing.zm_id ?? ""}
+                     onChange={(e) => setEditing({ ...editing, zm_id: e.target.value.trim().toUpperCase() || null })}
+                     className="inp" placeholder="NHP302" />
+            </Field>
           </div>
+          {filledFrom && (
+            <p className="mt-3 text-sm text-ink-muted">
+              Zone, Reports to and Zonal manager filled in from {filledFrom}. Change them only
+              if this person is an exception.
+            </p>
+          )}
           <div className="mt-4 max-w-xl">
             <Field label="Reason" hint="Recorded in the audit log with the change">
               <input value={reason} onChange={(e) => setReason(e.target.value)}
@@ -307,6 +360,55 @@ export default function PeoplePage() {
         the audit log with a reason.
       </p>
     </AppShell>
+  );
+}
+
+const NEW_VALUE = "__new__";
+
+/**
+ * A dropdown of the values in use, with a "New…" entry that switches to a text
+ * box for a value nobody has yet (a new or renamed region).
+ */
+function PickOrType({ value, options, newLabel, placeholder, onPick }: {
+  value: string;
+  options: string[];
+  newLabel: string;
+  placeholder: string;
+  onPick: (value: string, fromList: boolean) => void;
+}) {
+  const known = options.includes(value);
+  // A saved value that is not in the list (e.g. the person's region has no one
+  // else in it) opens as text, so it is shown rather than silently blanked.
+  const [typing, setTyping] = useState(!!value && !known && options.length > 0);
+
+  if (typing || options.length === 0) {
+    return (
+      <div className="flex gap-2">
+        <input value={value} onChange={(e) => onPick(e.target.value, false)}
+               className="inp" placeholder={placeholder} autoFocus={typing} />
+        {options.length > 0 && (
+          <button type="button" className="btn-quiet shrink-0"
+                  onClick={() => { setTyping(false); onPick("", false); }}>
+            Pick from list
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <select value={known ? value : ""} className="inp"
+            onChange={(e) => {
+              if (e.target.value === NEW_VALUE) {
+                setTyping(true);
+                onPick("", false);
+              } else {
+                onPick(e.target.value, true);
+              }
+            }}>
+      <option value="">Choose…</option>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+      <option value={NEW_VALUE}>{newLabel}</option>
+    </select>
   );
 }
 

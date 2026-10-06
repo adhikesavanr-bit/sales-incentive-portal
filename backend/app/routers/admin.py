@@ -41,6 +41,14 @@ def list_employees(
     return people
 
 
+@router.get("/employees/regions")
+def region_directory(
+    principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),
+):
+    """Regions and zones for the People form, with each one's RM and zonal manager."""
+    return employee_service.region_directory(employee_service.list_all(active_only=False))
+
+
 @router.get("/employees/roles")
 def assignable_roles(
     principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),

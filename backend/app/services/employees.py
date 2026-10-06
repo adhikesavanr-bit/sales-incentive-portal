@@ -206,3 +206,55 @@ def set_hierarchy(employee: Employee, updated_by: str) -> None:
         "updated_by": updated_by,
     }])
     forget_lookups()
+
+
+def region_directory(people: list[Employee]) -> dict:
+    """Regions and zones as they stand today, with who leads each.
+
+    Feeds the People form's dropdowns, so picking a region also fills in its
+    zone, RM and zonal manager. Without it, changing a region by hand left the
+    old RM and zonal manager in place (Sep 2026: NHP842 and NHP536 moved region
+    but still sat in their old RM's team).
+
+      region -> zone:  the zone most of its people are in
+      region -> RM:    the active Regional Manager placed in that region, or
+                       failing that the RM most of its people report to
+      region/zone -> zonal manager: the one most of its people have
+    """
+    from collections import Counter
+
+    active = [p for p in people if p.is_active]
+    names = {p.employee_id: p.full_name for p in people}
+
+    def _top(values) -> str | None:
+        counts = Counter(v for v in values if v)
+        return counts.most_common(1)[0][0] if counts else None
+
+    regions = []
+    for region in sorted({p.region for p in active if p.region}, key=_region_sort_key):
+        members = [p for p in active if p.region == region]
+        rms = [p.employee_id for p in members if p.role is Role.REGIONAL_MANAGER]
+        rm = rms[0] if len(rms) == 1 else _top(p.rm_id for p in members)
+        zm = _top(p.zm_id for p in members)
+        regions.append({
+            "region": region,
+            "zone": _top(p.zone for p in members),
+            "rm_id": rm, "rm_name": names.get(rm),
+            "zm_id": zm, "zm_name": names.get(zm),
+            "people": len(members),
+        })
+
+    zones = []
+    for zone in sorted({p.zone for p in active if p.zone}):
+        members = [p for p in active if p.zone == zone]
+        zm = _top(p.zm_id for p in members)
+        zones.append({"zone": zone, "zm_id": zm, "zm_name": names.get(zm),
+                      "people": len(members)})
+    return {"regions": regions, "zones": zones}
+
+
+def _region_sort_key(region: str):
+    """R2 before R10: order by the number after the R, then by name."""
+    import re
+    m = re.match(r"R(\d+)", region or "")
+    return (int(m.group(1)) if m else 10_000, region)
