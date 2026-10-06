@@ -243,7 +243,9 @@ def run(period: str, calculated_by: str,
         policy=coupon_rules.policy_for_period(period),
     )
 
-    employees = {e.employee_id: e for e in employee_service.list_all(active_only=False)}
+    # The hierarchy as it stood in the period: sub-manager roll-ups follow
+    # who reported to whom that month, not today.
+    employees = {e.employee_id: e for e in employee_service.list_all(active_only=False, period=period)}
     targets = load_targets(period)
     adjustments = load_adjustments(period)
     version = next_version(period)

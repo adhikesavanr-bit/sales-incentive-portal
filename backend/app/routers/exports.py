@@ -53,7 +53,7 @@ def export_statement(
     principal: Principal = Depends(require(Permission.EXPORT_SCOPED)),
 ):
     """One person's monthly statement as a PDF: their own, or anyone in scope."""
-    target = _authorise_target(principal, employee_id)
+    target = _authorise_target(principal, employee_id, period)
     _require_published(principal, period)
     row = dashboards.own(target, period)
     if row is None:

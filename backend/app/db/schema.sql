@@ -408,6 +408,45 @@ LEFT JOIN `${PROJECT}.${DATASET}.reporting_hierarchy` h
   ON e.employee_id = h.employee_id AND h.effective_to IS NULL
 WHERE e.effective_to IS NULL;
 
+-- The hierarchy as it stood in a given month ('YYYY-MM'). Each person's row
+-- is the latest one effective on or before the month's last day; someone whose
+-- first row is later than that (added after the fact) gets their first row,
+-- so a late-added joiner still owns the month's sales. Dashboards and the
+-- calculation read this, so moving someone from September leaves July and
+-- August under their old region and manager.
+CREATE OR REPLACE TABLE FUNCTION `${PROJECT}.${DATASET}.hierarchy_asof`(period STRING) AS (
+  WITH
+  d AS (SELECT LAST_DAY(PARSE_DATE('%Y-%m', period)) AS as_of),
+  e AS (
+    SELECT * EXCEPT (rn) FROM (
+      SELECT m.*, ROW_NUMBER() OVER (
+        PARTITION BY m.employee_id
+        ORDER BY m.effective_from <= d.as_of DESC,
+                 IF(m.effective_from <= d.as_of, m.effective_from, NULL) DESC NULLS LAST,
+                 m.effective_from,
+                 m.effective_to IS NULL DESC, m.effective_to DESC, m.updated_at DESC) AS rn
+      FROM `${PROJECT}.${DATASET}.employee_master` m CROSS JOIN d
+    ) WHERE rn = 1
+  ),
+  h AS (
+    SELECT * EXCEPT (rn) FROM (
+      SELECT r.*, ROW_NUMBER() OVER (
+        PARTITION BY r.employee_id
+        ORDER BY r.effective_from <= d.as_of DESC,
+                 IF(r.effective_from <= d.as_of, r.effective_from, NULL) DESC NULLS LAST,
+                 r.effective_from,
+                 r.effective_to IS NULL DESC, r.effective_to DESC, r.updated_at DESC) AS rn
+      FROM `${PROJECT}.${DATASET}.reporting_hierarchy` r CROSS JOIN d
+    ) WHERE rn = 1
+  )
+  SELECT
+    e.employee_id, e.full_name, e.initial, e.email, e.role, e.designation,
+    e.region, e.zone, e.vertical, e.is_active, e.exit_date,
+    h.submanager_id, h.rm_id, h.zm_id, h.business_head_id
+  FROM e
+  LEFT JOIN h ON h.employee_id = e.employee_id
+);
+
 CREATE OR REPLACE VIEW `${PROJECT}.${DATASET}.v_incentive_current` AS
 SELECT m.*
 FROM `${PROJECT}.${DATASET}.monthly_incentive` m

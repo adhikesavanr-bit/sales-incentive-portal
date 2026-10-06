@@ -463,7 +463,7 @@ class TestStatementExport:
         monkeypatch.setattr(exports.employee_service, "get_by_id", lambda e: None)
         monkeypatch.setattr(exports.audit, "record", lambda *a, **k: None)
         monkeypatch.setattr(dash_router.employee_service, "is_in_scope",
-                            lambda t, s, p: in_scope)
+                            lambda t, s, p, period=None: in_scope)
         from app.models.schemas import MonthStatus
         monkeypatch.setattr(dash_router.month, "get_status", lambda p: MonthStatus.APPROVED)
         return exports

@@ -328,15 +328,19 @@ export const api = {
 
   // The API reads `reason` from the query string, not the body. Sending it in
   // the body made every edit fail with a 422 ("reason: field required").
-  createEmployee: (body: EmployeeRow, reason: string) =>
-    request<EmployeeRow>(`/api/employees?reason=${encodeURIComponent(reason)}`, {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-
-  updateEmployee: (id: string, body: EmployeeRow, reason: string) =>
+  // `appliesFrom` ('YYYY-MM') is the first month the change counts for; earlier
+  // months keep the person's previous region and manager.
+  createEmployee: (body: EmployeeRow, reason: string, appliesFrom?: string) =>
     request<EmployeeRow>(
-      `/api/employees/${encodeURIComponent(id)}?reason=${encodeURIComponent(reason)}`,
+      `/api/employees?reason=${encodeURIComponent(reason)}` +
+        (appliesFrom ? `&effective_from=${appliesFrom}` : ""),
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  updateEmployee: (id: string, body: EmployeeRow, reason: string, appliesFrom?: string) =>
+    request<EmployeeRow>(
+      `/api/employees/${encodeURIComponent(id)}?reason=${encodeURIComponent(reason)}` +
+        (appliesFrom ? `&effective_from=${appliesFrom}` : ""),
       { method: "PUT", body: JSON.stringify(body) },
     ),
 

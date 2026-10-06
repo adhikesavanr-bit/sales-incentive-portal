@@ -60,6 +60,16 @@ def _cached(fn):
     return wrapper
 
 
+def _asof(s) -> str:
+    """The hierarchy as it stood in the query's period (@p), not as it is today.
+
+    A move or a rename takes effect from the month it was dated, so earlier
+    months keep grouping, scoping and roll-ups under the old region and
+    manager. Every query that uses it binds the period as @p.
+    """
+    return f"{s.table('hierarchy_asof')}(@p)"
+
+
 # Every column here must be table-qualified: employee_id, is_active, region,
 # zone and designation all exist on BOTH v_employee_hierarchy and
 # monthly_incentive, so a bare name is an ambiguous-column error at runtime.
@@ -100,7 +110,7 @@ def team_rows(principal: Principal, period: str) -> list[dict]:
                m.target_revenue, m.qualified_revenue, m.disqualified_revenue,
                m.revenue_pct, m.base_pct, m.arpu,
                m.total_incentive, m.net_payable, m.accumulation, m.is_active
-        FROM {s.table('v_employee_hierarchy')} h
+        FROM {_asof(s)} h
         LEFT JOIN {s.table('v_incentive_current')} m
           ON m.employee_id = h.employee_id AND m.period = @p
         WHERE {scope}
@@ -123,7 +133,7 @@ def summary(principal: Principal, period: str) -> dict:
         f"""
         SELECT {_METRICS}
         FROM {s.table('v_incentive_current')} m
-        JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
+        JOIN {_asof(s)} h USING (employee_id)
         WHERE m.period = @p AND {scope}
         """,
         {**params, "p": period},
@@ -164,7 +174,7 @@ def consolidated(principal: Principal, period: str) -> dict | None:
                COUNT(DISTINCT CASE WHEN m.is_active THEN m.employee_id END) AS headcount,
                {sums}
         FROM {s.table('v_incentive_current')} m
-        JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
+        JOIN {_asof(s)} h USING (employee_id)
         WHERE m.period = @p AND {scope}
         """,
         {**params, "p": period},
@@ -217,7 +227,7 @@ def group_by(principal: Principal, period: str, dimension: str) -> list[dict]:
         FROM (
           SELECT {col} AS group_key, {_METRICS}
           FROM {s.table('v_incentive_current')} m
-          JOIN {s.table('v_employee_hierarchy')} h USING (employee_id)
+          JOIN {_asof(s)} h USING (employee_id)
           WHERE m.period = @p AND {scope}
           GROUP BY group_key
         ) g
@@ -332,7 +342,7 @@ def scope_trend(principal: Principal, period: str) -> list[dict]:
                SUM(q.net_amount) AS net_revenue,
                SUM(CASE WHEN q.status = 'QUALIFIED' THEN q.net_amount ELSE 0 END) AS qualified_revenue
         FROM q JOIN sales r ON r.payment_id = q.payment_id
-        JOIN {s.table('v_employee_hierarchy')} h ON h.employee_id = q.employee_id
+        JOIN {_asof(s)} h ON h.employee_id = q.employee_id
         WHERE {scope}
         GROUP BY day ORDER BY day
         """,

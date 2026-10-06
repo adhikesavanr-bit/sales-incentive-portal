@@ -70,6 +70,26 @@ def assignable_roles(
     ]
 
 
+def _effective_date(month: str | None, employee_id: str | None = None) -> date | None:
+    """First day of the month a People change applies from ('YYYY-MM').
+
+    A change cannot be dated before the person's latest change: the history
+    would then have two records for the same months.
+    """
+    if not month:
+        return None
+    eff = date.fromisoformat(f"{month}-01")
+    if employee_id:
+        latest = employee_service.latest_effective_from(employee_id)
+        if latest and eff < latest:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"{employee_id} already has a change from {latest:%B %Y}. "
+                f"Choose {latest:%B %Y} or later.",
+            )
+    return eff
+
+
 def _check_initial(employee: Employee) -> None:
     employee_service.normalise_initial(employee)
     problem = employee_service.initial_conflict(employee)
@@ -81,6 +101,7 @@ def _check_initial(employee: Employee) -> None:
 def create_employee(
     employee: Employee,
     reason: str = Query("Created via admin console"),
+    effective_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),
 ):
     if employee_service.get_by_id(employee.employee_id):
@@ -89,12 +110,15 @@ def create_employee(
             f"{employee.employee_id} already exists. Edit it instead.",
         )
     _check_initial(employee)
-    employee_service.upsert(employee, principal.email)
-    employee_service.set_hierarchy(employee, principal.email)
+    eff = _effective_date(effective_from)
+    employee_service.upsert(employee, principal.email, eff)
+    employee_service.set_hierarchy(employee, principal.email, eff)
     audit.record(
         principal.email, "EMPLOYEE_CREATE", entity_type="employee",
         affected_record=employee.employee_id,
-        new_value=employee.model_dump(), reason=reason,
+        new_value={**employee.model_dump(mode="json"),
+                   "applies_from": eff.isoformat() if eff else None},
+        reason=reason,
     )
     return employee
 
@@ -104,6 +128,7 @@ def update_employee(
     employee_id: str,
     employee: Employee,
     reason: str = Query(..., min_length=3),
+    effective_from: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(require(Permission.MANAGE_EMPLOYEES)),
 ):
     existing = employee_service.get_by_id(employee_id)
@@ -111,12 +136,16 @@ def update_employee(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No employee {employee_id}.")
     employee.employee_id = employee_id
     _check_initial(employee)
-    employee_service.upsert(employee, principal.email)
-    employee_service.set_hierarchy(employee, principal.email)
+    eff = _effective_date(effective_from, employee_id)
+    employee_service.upsert(employee, principal.email, eff)
+    employee_service.set_hierarchy(employee, principal.email, eff)
     audit.record(
         principal.email, "EMPLOYEE_UPDATE", entity_type="employee",
         affected_record=employee_id,
-        old_value=existing.model_dump(), new_value=employee.model_dump(), reason=reason,
+        old_value=existing.model_dump(mode="json"),
+        new_value={**employee.model_dump(mode="json"),
+                   "applies_from": eff.isoformat() if eff else None},
+        reason=reason,
     )
     return employee
 

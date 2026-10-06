@@ -40,7 +40,7 @@ def in_scope(principal: Principal, period: str) -> list[dict]:
         f"""
         SELECT h.employee_id, h.full_name, h.region, h.zone, h.designation,
                t.period, t.target_units, t.winner_units, t.status, t.version
-        FROM {s.table('v_employee_hierarchy')} h
+        FROM {s.table('hierarchy_asof')}(@p) h
         LEFT JOIN (
           SELECT * FROM {s.table('targets')} WHERE period = @p
           QUALIFY ROW_NUMBER() OVER (PARTITION BY employee_id ORDER BY version DESC) = 1

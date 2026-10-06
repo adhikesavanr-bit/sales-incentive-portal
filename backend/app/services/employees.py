@@ -88,10 +88,14 @@ def deactivate(employee_id: str, exit_date: date, updated_by: str) -> Employee:
     return existing
 
 
-def list_all(active_only: bool = True) -> list[Employee]:
+def list_all(active_only: bool = True, period: str | None = None) -> list[Employee]:
+    """Everyone today, or as the hierarchy stood in `period` ('YYYY-MM')."""
     s = get_settings()
     where = "WHERE is_active" if active_only else ""
-    rows = bq.query(f"SELECT * FROM {s.table('v_employee_hierarchy')} {where}")
+    if period:
+        rows = bq.query(f"SELECT * FROM {s.table('hierarchy_asof')}(@p) {where}", {"p": period})
+    else:
+        rows = bq.query(f"SELECT * FROM {s.table('v_employee_hierarchy')} {where}")
     return [_row_to_employee(r) for r in rows]
 
 
@@ -105,13 +109,21 @@ def list_in_scope(scope_sql: str, params: dict) -> list[Employee]:
     return [_row_to_employee(r) for r in rows]
 
 
-def is_in_scope(employee_id: str, scope_sql: str, params: dict) -> bool:
-    """The single check that stops `?employee_id=NHP002` from working."""
+def is_in_scope(employee_id: str, scope_sql: str, params: dict,
+                period: str | None = None) -> bool:
+    """The single check that stops `?employee_id=NHP002` from working.
+
+    With a period, the check uses the hierarchy of that month: a manager can
+    open the July page of someone who was in their team in July.
+    """
     s = get_settings()
+    source = (f"{s.table('hierarchy_asof')}(@scope_period)" if period
+              else s.table('v_employee_hierarchy'))
+    extra = {"scope_period": period} if period else {}
     rows = bq.query(
-        f"SELECT 1 FROM {s.table('v_employee_hierarchy')} h "
+        f"SELECT 1 FROM {source} h "
         f"WHERE h.employee_id = @target AND ({scope_sql}) LIMIT 1",
-        {**params, "target": employee_id},
+        {**params, **extra, "target": employee_id},
     )
     return bool(rows)
 
@@ -153,15 +165,32 @@ def initial_conflict(employee: Employee) -> str | None:
     return None
 
 
-def upsert(employee: Employee, updated_by: str) -> None:
-    """Close the current row and open a new one (SCD-2)."""
+def latest_effective_from(employee_id: str) -> date | None:
+    """The date the person's current record took effect, if they have one."""
+    s = get_settings()
+    rows = bq.query(
+        f"SELECT MAX(effective_from) AS d FROM {s.table('employee_master')} "
+        "WHERE employee_id = @id",
+        {"id": employee_id},
+    )
+    return rows[0]["d"] if rows else None
+
+
+def upsert(employee: Employee, updated_by: str, effective_from: date | None = None) -> None:
+    """Close the current row and open a new one (SCD-2).
+
+    `effective_from` is the first day the change applies (the month it was
+    chosen for in People); months before it keep the previous row. Defaults
+    to today.
+    """
     s = get_settings()
     now = datetime.now(timezone.utc)
+    eff = effective_from or now.date()
     bq.query(
         f"UPDATE {s.table('employee_master')} "
-        "SET effective_to = CURRENT_DATE(), updated_at = CURRENT_TIMESTAMP() "
+        "SET effective_to = @eff, updated_at = CURRENT_TIMESTAMP() "
         "WHERE employee_id = @id AND effective_to IS NULL",
-        {"id": employee.employee_id},
+        {"id": employee.employee_id, "eff": eff},
     )
     bq.append_rows("employee_master", [{
         "employee_id": employee.employee_id,
@@ -175,7 +204,7 @@ def upsert(employee: Employee, updated_by: str) -> None:
         "vertical": employee.vertical,
         "is_active": employee.is_active,
         "exit_date": employee.exit_date.isoformat() if employee.exit_date else None,
-        "effective_from": now.date().isoformat(),
+        "effective_from": eff.isoformat(),
         "effective_to": None,
         "updated_at": now.isoformat(),
         "updated_by": updated_by,
@@ -183,14 +212,16 @@ def upsert(employee: Employee, updated_by: str) -> None:
     forget_lookups()
 
 
-def set_hierarchy(employee: Employee, updated_by: str) -> None:
+def set_hierarchy(employee: Employee, updated_by: str,
+                  effective_from: date | None = None) -> None:
     s = get_settings()
     now = datetime.now(timezone.utc)
+    eff = effective_from or now.date()
     bq.query(
         f"UPDATE {s.table('reporting_hierarchy')} "
-        "SET effective_to = CURRENT_DATE(), updated_at = CURRENT_TIMESTAMP() "
+        "SET effective_to = @eff, updated_at = CURRENT_TIMESTAMP() "
         "WHERE employee_id = @id AND effective_to IS NULL",
-        {"id": employee.employee_id},
+        {"id": employee.employee_id, "eff": eff},
     )
     bq.append_rows("reporting_hierarchy", [{
         "employee_id": employee.employee_id,
@@ -200,7 +231,7 @@ def set_hierarchy(employee: Employee, updated_by: str) -> None:
         "business_head_id": employee.business_head_id,
         "region": employee.region,
         "zone": employee.zone,
-        "effective_from": now.date().isoformat(),
+        "effective_from": eff.isoformat(),
         "effective_to": None,
         "updated_at": now.isoformat(),
         "updated_by": updated_by,

@@ -33,13 +33,17 @@ def _person_dashboard(employee_id: str, period: str) -> dict:
     return row
 
 
-def _authorise_target(principal: Principal, employee_id: str | None) -> str:
-    """Resolve which employee's data is being asked for, and prove it is allowed."""
+def _authorise_target(principal: Principal, employee_id: str | None,
+                      period: str | None = None) -> str:
+    """Resolve which employee's data is being asked for, and prove it is allowed.
+
+    Scope is checked against the hierarchy of the period being viewed.
+    """
     target = employee_id or principal.employee_id
     if target == principal.employee_id:
         return target
     scope, params = visible_employee_sql(principal)
-    if not employee_service.is_in_scope(target, scope, params):
+    if not employee_service.is_in_scope(target, scope, params, period):
         # Deliberately the same message as a missing employee: a 403 that
         # distinguishes "exists but not yours" leaks the org chart.
         raise HTTPException(
@@ -175,7 +179,7 @@ def employee_dashboard(
     period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(current_principal),
 ):
-    target = _authorise_target(principal, employee_id)
+    target = _authorise_target(principal, employee_id, period)
     if not can_see_month(principal, period):
         return _not_published(target, period)
     return _mark_unpublished(_person_dashboard(target, period), period)
@@ -189,7 +193,7 @@ def employee_sales(
     offset: int = 0,
     principal: Principal = Depends(current_principal),
 ):
-    target = _authorise_target(principal, employee_id)
+    target = _authorise_target(principal, employee_id, period)
     if not can_see_month(principal, period):
         return []
     return dashboards.transactions(target, period, limit, offset)
@@ -201,7 +205,7 @@ def employee_coupons(
     period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
     principal: Principal = Depends(current_principal),
 ):
-    target = _authorise_target(principal, employee_id)
+    target = _authorise_target(principal, employee_id, period)
     if not can_see_month(principal, period):
         return []
     return dashboards.coupon_analysis(target, period)

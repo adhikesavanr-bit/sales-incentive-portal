@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
+import { defaultPeriod, monthLabel, recentPeriods } from "@/lib/format";
 import { useFormDialog } from "@/components/FormDialog";
 import {
   api, startViewAs, type EmployeeRow, type RegionDirectory, type RoleOption,
@@ -40,6 +41,9 @@ export default function PeoplePage() {
   // The reason is a field on the form, not a window.prompt: dismissing a
   // prompt with Enter can re-click the focused button, which submitted twice.
   const [reason, setReason] = useState("");
+  // The first month a change counts for. Earlier months keep the person's
+  // previous region and manager in every team view and calculation.
+  const [appliesFrom, setAppliesFrom] = useState(defaultPeriod());
   const [saving, setSaving] = useState(false);
   const dialog = useFormDialog();
 
@@ -95,6 +99,7 @@ export default function PeoplePage() {
     setEditing({ ...row });
     setIsNew(asNew);
     setFilledFrom(null);
+    setAppliesFrom(defaultPeriod());
     setReason("");
     setError(null);
     setNotice(null);
@@ -114,11 +119,11 @@ export default function PeoplePage() {
     setError(null);
     try {
       if (isNew) {
-        await api.createEmployee(editing, reason.trim());
+        await api.createEmployee(editing, reason.trim(), appliesFrom);
         setNotice(`${editing.full_name} added. They now appear in Targets and My team.`);
       } else {
-        await api.updateEmployee(editing.employee_id, editing, reason.trim());
-        setNotice(`${editing.full_name} updated.`);
+        await api.updateEmployee(editing.employee_id, editing, reason.trim(), appliesFrom);
+        setNotice(`${editing.full_name} updated from ${monthLabel(appliesFrom)}.`);
       }
       setEditing(null);
       load();
@@ -275,7 +280,16 @@ export default function PeoplePage() {
               if this person is an exception.
             </p>
           )}
-          <div className="mt-4 max-w-xl">
+          <div className="mt-4 grid max-w-3xl gap-4 sm:grid-cols-[14rem_1fr]">
+            <Field label="Applies from"
+                   hint={`${monthLabel(appliesFrom)} onwards; earlier months stay as they were`}>
+              <select value={appliesFrom} onChange={(e) => setAppliesFrom(e.target.value)}
+                      className="inp">
+                {recentPeriods(15).map((p) => (
+                  <option key={p} value={p}>{monthLabel(p)}</option>
+                ))}
+              </select>
+            </Field>
             <Field label="Reason" hint="Recorded in the audit log with the change">
               <input value={reason} onChange={(e) => setReason(e.target.value)}
                      onKeyDown={(e) => { if (e.key === "Enter") save(); }}

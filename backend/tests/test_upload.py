@@ -236,7 +236,7 @@ class TestSqlStatementSplitting:
         sql = (pathlib.Path(__file__).resolve().parents[1] / "app/db/schema.sql").read_text()
         sql = sql.replace("${PROJECT}", "p").replace("${DATASET}", "d").replace("${LOCATION}", "US")
         stmts = split_statements(sql)
-        assert len(stmts) == 22
+        assert len(stmts) == 23
         for s in stmts:
             assert s.count("(") == s.count(")"), s.splitlines()[0]
 
@@ -283,7 +283,9 @@ class TestSchemaPartitioning:
         import re
         partitioned = {}
         for s in self._statements():
-            if "PARTITION BY" in s:
+            # A table function's window clauses say PARTITION BY too; only
+            # tables are partitioned.
+            if "PARTITION BY" in s and "TABLE FUNCTION" not in s:
                 name = re.search(r"`p\.d\.(\w+)`", s).group(1)
                 partitioned[name] = next(l.strip() for l in s.splitlines() if "PARTITION BY" in l)
         assert partitioned == {
