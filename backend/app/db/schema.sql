@@ -303,11 +303,11 @@ CLUSTER BY period, employee_id, region;
 -- newest row so its in-memory caches never lag another instance's write by
 -- more than a few seconds. Rows are only needed briefly, so they expire.
 CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.cache_events` (
-  at    TIMESTAMP NOT NULL,
-  path  STRING,
-  `by`  STRING
+  event_at  TIMESTAMP NOT NULL,
+  path      STRING,
+  `by`      STRING
 )
-PARTITION BY DATE(at)
+PARTITION BY DATE(event_at)
 OPTIONS (partition_expiration_days = 7);
 
 CREATE TABLE IF NOT EXISTS `${PROJECT}.${DATASET}.month_status` (

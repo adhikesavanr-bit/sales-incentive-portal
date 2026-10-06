@@ -57,10 +57,10 @@ class FakeBQ:
         self.events = []
 
     def insert_rows(self, table, rows):
-        self.events += [datetime.fromisoformat(r["at"]) for r in rows]
+        self.events += [datetime.fromisoformat(r["event_at"]) for r in rows]
 
     def query(self, sql, params=None):
-        return [{"at": max(self.events) if self.events else None}]
+        return [{"newest": max(self.events) if self.events else None}]
 
 
 def _fresh(monkeypatch):

@@ -287,7 +287,7 @@ class TestSchemaPartitioning:
                 name = re.search(r"`p\.d\.(\w+)`", s).group(1)
                 partitioned[name] = next(l.strip() for l in s.splitlines() if "PARTITION BY" in l)
         assert partitioned == {
-            "cache_events": "PARTITION BY DATE(at)",
+            "cache_events": "PARTITION BY DATE(event_at)",
             "raw_sales": "PARTITION BY DATE(payment_date_ist)",
             "audit_log": "PARTITION BY DATE(occurred_at)",
         }

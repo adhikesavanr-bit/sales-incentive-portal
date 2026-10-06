@@ -43,7 +43,7 @@ def record_write(path: str, who: str | None = None) -> None:
     now = datetime.now(timezone.utc)
     forget_local()
     try:
-        bq.insert_rows("cache_events", [{"at": now.isoformat(), "path": path, "by": who}])
+        bq.insert_rows("cache_events", [{"event_at": now.isoformat(), "path": path, "by": who}])
         with _lock:
             # This instance is already fresh; do not clear it again for its own event.
             _last_seen = max(_last_seen, now) if _last_seen else now
@@ -65,13 +65,13 @@ def check() -> bool:
         _last_check = now
     try:
         rows = bq.query(
-            "SELECT MAX(at) AS at FROM "
-            f"{_table()} WHERE at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)"
+            "SELECT MAX(event_at) AS newest FROM "
+            f"{_table()} WHERE event_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 DAY)"
         )
     except Exception:  # noqa: BLE001 - a failed check must not break the page
         log.warning("Cache event check failed", exc_info=True)
         return False
-    newest = rows[0]["at"] if rows else None
+    newest = rows[0]["newest"] if rows else None
     with _lock:
         stale = newest is not None and (_last_seen is None or newest > _last_seen)
         if newest is not None:
