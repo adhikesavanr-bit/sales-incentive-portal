@@ -89,6 +89,29 @@ export async function endViewAs(): Promise<void> {
   window.location.href = "/admin/employees";
 }
 
+/**
+ * FastAPI sends `detail` as a string for our own errors but as a list of
+ * {loc, msg} objects when a request fails validation. Shown raw, the list
+ * read "[object Object]"; this turns it into a sentence.
+ */
+function describeDetail(detail: unknown): string | null {
+  if (detail == null) return null;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((d) => {
+      if (d && typeof d === "object" && "msg" in d) {
+        const loc = Array.isArray((d as { loc?: unknown[] }).loc)
+          ? (d as { loc: unknown[] }).loc.filter((x) => x !== "body" && x !== "query").join(".")
+          : "";
+        return loc ? `${loc}: ${(d as { msg: string }).msg}` : String((d as { msg: string }).msg);
+      }
+      return String(d);
+    });
+    return parts.length ? `Could not save: ${parts.join("; ")}.` : null;
+  }
+  return JSON.stringify(detail);
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
@@ -107,7 +130,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let detail = `Request failed (${res.status}).`;
     try {
-      detail = (await res.json()).detail ?? detail;
+      detail = describeDetail((await res.json()).detail) ?? detail;
     } catch {
       /* the body was not JSON; keep the generic message */
     }
@@ -301,17 +324,19 @@ export const api = {
 
   assignableRoles: () => request<RoleOption[]>("/api/employees/roles"),
 
+  // The API reads `reason` from the query string, not the body. Sending it in
+  // the body made every edit fail with a 422 ("reason: field required").
   createEmployee: (body: EmployeeRow, reason: string) =>
-    request<EmployeeRow>("/api/employees", {
+    request<EmployeeRow>(`/api/employees?reason=${encodeURIComponent(reason)}`, {
       method: "POST",
-      body: JSON.stringify({ ...body, reason }),
+      body: JSON.stringify(body),
     }),
 
   updateEmployee: (id: string, body: EmployeeRow, reason: string) =>
-    request<EmployeeRow>(`/api/employees/${id}`, {
-      method: "PUT",
-      body: JSON.stringify({ ...body, reason }),
-    }),
+    request<EmployeeRow>(
+      `/api/employees/${encodeURIComponent(id)}?reason=${encodeURIComponent(reason)}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    ),
 
   deactivateEmployee: (id: string, exitDate: string, reason: string) =>
     request<EmployeeRow>(`/api/employees/${id}/deactivate`, {
