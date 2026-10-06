@@ -11,9 +11,10 @@ See DATA_MAPPING.md §4.
 """
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 
 from app.models.schemas import (
     CouponSignature,
@@ -153,6 +154,36 @@ def min_sales_for(group_size: str, required_sales: int) -> int:
     return max(1, -(-required_sales * 8 // 10))  # ceil(0.8 * required)
 
 
+_IST = timezone(timedelta(hours=5, minutes=30))
+_SIGNATURE_START = re.compile(r"_(\d{6}-\d{2}:\d{2})_")
+
+
+def _ist(moment: datetime) -> datetime:
+    """A sale time as IST wall-clock time.
+
+    BigQuery returns payment_date_ist as a UTC timestamp; taking .date() of it
+    put sales between midnight and 05:30 IST on the previous day.
+    """
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(_IST)
+    return moment.replace(tzinfo=None)
+
+
+def _starts_at(sig: CouponSignature) -> datetime:
+    """When the coupon went live, IST, from its signature (CODE_yymmdd-HH:MM_...).
+
+    Falls back to the start of the activation date when the signature carries
+    no time.
+    """
+    m = _SIGNATURE_START.search(sig.coupon_signature or "")
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%y%m%d-%H:%M")
+        except ValueError:
+            pass
+    return datetime.combine(sig.activation_date or date.min, time.min)
+
+
 def _resolve_coupon(
     txn: SalesTransaction,
     by_code: dict[str, list[CouponSignature]],
@@ -170,15 +201,22 @@ def _resolve_coupon(
     if len(sigs) == 1:
         return sigs[0], None
 
-    d = txn.payment_date_ist.date()
+    sold_at = _ist(txn.payment_date_ist)
+    d = sold_at.date()
     in_window = [
         s for s in sigs
         if (s.activation_date is None or s.activation_date <= d)
         and (s.deactivation_date is None or d <= s.deactivation_date)
     ]
     if in_window:
-        # Latest activation wins when windows overlap.
-        return max(in_window, key=lambda s: s.activation_date or date.min), None
+        # A coupon cannot take a sale made before it started. Windows are kept
+        # as dates, so on a hand-over day both coupons look live all day; the
+        # start time in the signature settles it. Sep 2026: SNS01BRAHM26's G5
+        # coupon started 25 Sep 11:51 and took two sales made at 11:35 and
+        # 11:38, which the coupon report counts on the G10 coupon.
+        started = [s for s in in_window if _starts_at(s) <= sold_at]
+        # Latest start wins when windows overlap.
+        return max(started or in_window, key=_starts_at), None
     # Outside every window: attribute to the nearest preceding signature so the
     # sale is still counted against the right BDE, and record why.
     past = [s for s in sigs if s.activation_date and s.activation_date <= d]

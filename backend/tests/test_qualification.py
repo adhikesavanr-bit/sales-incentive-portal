@@ -347,3 +347,53 @@ class TestCouponPolicy:
         res = run_qualification(sales("CCC10MMA", 3), [s], policy=CouponPolicy())
         assert res.signatures[s.coupon_signature].min_sales == 8
         assert res.signatures[s.coupon_signature].qualification_3 is False
+
+
+# --- coupon hand-over on the same day (Sep 2026, SNS01BRAHM26) -----------------
+def _hand_over():
+    from datetime import date
+    from app.models.schemas import CouponSignature
+    def s(sig, size, act, deact, req):
+        return CouponSignature(coupon_signature=sig, coupon_code="SNS01BRAHM26",
+                               employee_id="NHP698", group_size=size, required_sales=req,
+                               min_sales=req, activation_date=act, deactivation_date=deact)
+    g10 = s("SNS01BRAHM26_260918-10:19_1_5_FIELDG10", "G10", date(2026, 9, 18), date(2026, 9, 25), 10)
+    g5 = s("SNS01BRAHM26_260925-11:51_1_5_FIELDG5", "G5", date(2026, 9, 25), date(2026, 9, 30), 5)
+    return g10, g5
+
+
+def _sale_at(utc):
+    from app.models.schemas import SalesTransaction
+    return SalesTransaction(payment_id="p", payment_status="captured", payment_date_ist=utc,
+                            paid_amount=71999, net_amount=61016.1, coupon="SNS01BRAHM26")
+
+
+def test_a_sale_before_the_new_coupon_started_stays_on_the_old_one():
+    from datetime import datetime, timezone
+    from app.engines.qualification import _resolve_coupon
+    g10, g5 = _hand_over()
+    by_code = {"SNS01BRAHM26": [g10, g5]}
+    # 25 Sep 06:05 UTC = 11:35 IST, before G5 started at 11:51
+    sig, reason = _resolve_coupon(_sale_at(datetime(2026, 9, 25, 6, 5, tzinfo=timezone.utc)), by_code)
+    assert sig is g10 and reason is None
+    # 25 Sep 06:52 UTC = 12:22 IST: both live, the newer coupon wins
+    sig, _ = _resolve_coupon(_sale_at(datetime(2026, 9, 25, 6, 52, tzinfo=timezone.utc)), by_code)
+    assert sig is g5
+
+
+def test_sale_dates_are_read_in_ist_not_utc():
+    from datetime import datetime, timezone
+    from app.engines.qualification import _ist
+    # 25 Sep 19:00 UTC is 26 Sep 00:30 IST
+    assert _ist(datetime(2026, 9, 25, 19, 0, tzinfo=timezone.utc)) == datetime(2026, 9, 26, 0, 30)
+    assert _ist(datetime(2026, 9, 26, 0, 30)) == datetime(2026, 9, 26, 0, 30)   # naive = already IST
+
+
+def test_a_signature_without_a_time_starts_at_midnight():
+    from datetime import date, datetime
+    from app.engines.qualification import _starts_at
+    from app.models.schemas import CouponSignature
+    s = CouponSignature(coupon_signature="ODD", coupon_code="ODD", employee_id="E",
+                        group_size="G5", required_sales=5, min_sales=5,
+                        activation_date=date(2026, 9, 3))
+    assert _starts_at(s) == datetime(2026, 9, 3, 0, 0)
