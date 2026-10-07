@@ -194,6 +194,11 @@ def consolidated(principal: Principal, period: str) -> dict | None:
         ),
         # As the engine defines it per person: net revenue over units sold.
         "arpu": f["gross_net_revenue"] / f["gross_units"] if f["gross_units"] else 0.0,
+        # Incentive earned over qualified + disqualified revenue (excl. GST).
+        "payout_pct": (
+            f["total_incentive"] / (f["qualified_revenue"] + f["disqualified_revenue"])
+            if f["qualified_revenue"] + f["disqualified_revenue"] else 0.0
+        ),
     }
 
 
@@ -345,6 +350,36 @@ def scope_trend(principal: Principal, period: str) -> list[dict]:
         JOIN {_asof(s)} h ON h.employee_id = q.employee_id
         WHERE {scope}
         GROUP BY day ORDER BY day
+        """,
+        {**params, "p": period},
+    )
+
+
+@_cached
+def plan_summary(principal: Principal, period: str) -> list[dict]:
+    """Revenue (excl. GST) and payment count per plan, down to the BDE.
+
+    One row per plan, duration, region and BDE; the page folds them into the
+    Plan > Region > BDE > Emp ID drill-down of the Plan Wise Summary pivot.
+    Qualified and disqualified are both counted, as in that pivot.
+    """
+    s = get_settings()
+    scope, params = visible_employee_sql(principal)
+    return bq.query(
+        f"""
+        {_with(period)}
+        SELECT COALESCE(r.plan_title, 'Unknown plan') AS plan_title,
+               r.plan_duration_in_month,
+               COALESCE(h.region, 'Unassigned') AS region,
+               h.full_name AS bde_name, q.employee_id,
+               COUNT(*) AS payments,
+               SUM(q.net_amount) AS revenue,
+               SUM(CASE WHEN q.status = 'QUALIFIED' THEN q.net_amount ELSE 0 END)
+                 AS qualified_revenue
+        FROM q LEFT JOIN sales r ON r.payment_id = q.payment_id
+        JOIN {_asof(s)} h ON h.employee_id = q.employee_id
+        WHERE {scope}
+        GROUP BY plan_title, r.plan_duration_in_month, region, bde_name, q.employee_id
         """,
         {**params, "p": period},
     )
