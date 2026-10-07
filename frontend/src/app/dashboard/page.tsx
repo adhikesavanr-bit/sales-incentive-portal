@@ -7,6 +7,7 @@ import { AppShell } from "@/components/AppShell";
 import { UnpublishedBanner } from "@/components/UnpublishedBanner";
 import { CouponAnalysis } from "@/components/CouponAnalysis";
 import { DownloadButton } from "@/components/DownloadButton";
+import { PlanSummary } from "@/components/PlanSummary";
 import { PayoutHeadline } from "@/components/PayoutHeadline";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { SlabRuler } from "@/components/SlabRuler";
@@ -33,6 +34,8 @@ const BDE_SLABS = [
 // heads have no incentive row of their own, so theirs would always be empty;
 // RMs and ZMs have both, and choose.
 const CONSOLIDATED_ONLY = new Set(["SUPER_ADMIN", "FINANCE_ADMIN", "BUSINESS_HEAD"]);
+// Of those, who also gets the payout % and the plan-wise drill-down.
+const BUSINESS_LEVEL = new Set(["SUPER_ADMIN", "FINANCE_ADMIN", "BUSINESS_HEAD"]);
 const CAN_TOGGLE = new Set(["REGIONAL_MANAGER", "ZONAL_MANAGER"]);
 
 type View = "me" | "team";
@@ -98,7 +101,7 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {mode === "team" && <ConsolidatedView period={period} />}
+      {mode === "team" && <ConsolidatedView period={period} businessLevel={BUSINESS_LEVEL.has(role)} />}
 
       {mode === "me" && error && (
         <p role="alert" className="mt-6 panel bg-disqualified-wash p-4 text-sm text-disqualified">
@@ -252,7 +255,7 @@ export default function DashboardPage() {
 
 /** The caller and everyone below them, added up. No sales list: at this scale
  * it belongs on My team, one person at a time. */
-function ConsolidatedView({ period }: { period: string }) {
+function ConsolidatedView({ period, businessLevel }: { period: string; businessLevel: boolean }) {
   const [data, setData] = useState<Consolidated | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -303,6 +306,12 @@ function ConsolidatedView({ period }: { period: string }) {
         <Stat label="Disqualified" value={rupeesShort(data.disqualified_revenue)}
               sub={`${count(data.disqualified_units)} sales`} tone="disqualified" />
       </div>
+      {businessLevel && (
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Stat label="Payout %" value={percent(data.payout_pct, 2)}
+                sub="Incentive ÷ (qualified + disqualified), excl. GST" />
+        </div>
+      )}
 
       <section className="panel mt-4 p-6">
         <h2 className="text-sm font-semibold">Totals for {data.scope_label}</h2>
@@ -315,6 +324,12 @@ function ConsolidatedView({ period }: { period: string }) {
           <Line term="People with sales" value={count(data.headcount)} />
           <Line term="BDE incentive" value={rupees(data.bde_incentive)} />
           <Line term="Sub-manager incentive" value={rupees(data.submanager_incentive)} />
+          {businessLevel && (
+            <Line
+              term="Payout % (incentive ÷ revenue excl. GST)"
+              value={percent(data.payout_pct, 2)}
+            />
+          )}
         </dl>
         <p className="mt-4 border-t border-rule pt-4 text-sm text-ink-muted">
           Sums of each person&rsquo;s stored figures; achievement is recomputed from the
@@ -322,6 +337,8 @@ function ConsolidatedView({ period }: { period: string }) {
           <Link href="/team" className="underline">My team</Link>.
         </p>
       </section>
+
+      {businessLevel && <PlanSummary period={period} />}
 
       {data.trend && data.trend.length > 0 && (
         <section className="panel mt-4 p-6">

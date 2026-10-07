@@ -146,8 +146,24 @@ def my_consolidated(
         return {**_empty_state(principal.employee_id, period),
                 "scope_label": _scope_label(principal)}
     row["scope_label"] = _scope_label(principal)
+    if not principal.can(Permission.VIEW_BUSINESS):
+        row.pop("payout_pct", None)
     row["trend"] = trend_f.result()
     return _mark_unpublished(row, period)
+
+
+@router.get("/me/plan-summary")
+def my_plan_summary(
+    period: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(require(Permission.VIEW_BUSINESS)),
+):
+    """Plan-wise revenue and payments with the BDE-level rows to drill into.
+
+    Business heads and finance/super admins only (VIEW_BUSINESS).
+    """
+    if not can_see_month(principal, period):
+        return []
+    return dashboards.plan_summary(principal, period)
 
 
 @router.get("/me/sales")

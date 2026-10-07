@@ -223,6 +223,10 @@ export const api = {
   myConsolidated: (period: string) =>
     request<Consolidated>(`/api/me/consolidated?period=${period}`),
 
+  /** Business heads and admins only. */
+  myPlanSummary: (period: string) =>
+    request<PlanSummaryRow[]>(`/api/me/plan-summary?period=${period}`),
+
   mySales: (period: string, limit = 1000, offset = 0) =>
     request<Transaction[]>(
       `/api/me/sales?period=${period}&limit=${limit}&offset=${offset}`,
@@ -480,7 +484,22 @@ export interface Consolidated {
   total_incentive: number;
   accumulation: number;
   net_payable: number;
+  // Incentive earned / (qualified + disqualified revenue excl. GST). Business
+  // heads and admins only.
+  payout_pct?: number;
   trend?: Breakdown["trend"];
+}
+
+/** One plan / region / BDE slice of the Plan Wise Summary. */
+export interface PlanSummaryRow {
+  plan_title: string;
+  plan_duration_in_month: number | null;
+  region: string;
+  bde_name: string | null;
+  employee_id: string;
+  payments: number;
+  revenue: number;
+  qualified_revenue: number;
 }
 
 /** One coupon's verdict for a month: the workbook's "Coupon Analysis" block. */
