@@ -4,6 +4,9 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { api, type PlanSummaryRow } from "@/lib/api";
 import { count, percent, rupees } from "@/lib/format";
+import { SortTh, sortRows, type SortState } from "@/components/Sortable";
+
+type SortKey = "label" | "revenue" | "payments";
 
 interface Node {
   key: string;
@@ -46,12 +49,15 @@ function build(rows: PlanSummaryRow[]): Node[] {
       level = node.children;
     });
   }
-  const sort = (ns: Node[]) => {
-    ns.sort((a, b) => b.revenue - a.revenue);
-    ns.forEach((n) => sort(n.children));
-  };
-  sort(roots);
   return roots;
+}
+
+/** Orders every level of the tree the same way, so a drill-down reads like its parent. */
+function sortTree(nodes: Node[], sort: SortState<SortKey>): Node[] {
+  return sortRows(nodes, (n, k) => n[k], sort).map((n) => ({
+    ...n,
+    children: sortTree(n.children, sort),
+  }));
 }
 
 /** Plan-level summary with drill-down. Business heads and finance/super admins. */
@@ -67,9 +73,14 @@ export function PlanSummary({ period }: { period: string }) {
     api.myPlanSummary(period).then(setRows).catch((e) => setError(e.message));
   }, [period]);
 
-  const tree = useMemo(() => build(rows ?? []), [rows]);
-  const total = tree.reduce((a, n) => a + n.revenue, 0);
-  const totalPayments = tree.reduce((a, n) => a + n.payments, 0);
+  const [sort, setSort] = useState<SortState<SortKey>>({ key: "revenue", dir: "desc" });
+  const onSort = (key: SortKey, firstDir: "asc" | "desc" = "desc") =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: firstDir }));
+
+  const built = useMemo(() => build(rows ?? []), [rows]);
+  const tree = useMemo(() => sortTree(built, sort), [built, sort]);
+  const total = built.reduce((a, n) => a + n.revenue, 0);
+  const totalPayments = built.reduce((a, n) => a + n.payments, 0);
 
   const toggle = (key: string) =>
     setOpen((prev) => {
@@ -117,7 +128,7 @@ export function PlanSummary({ period }: { period: string }) {
         <h2 className="text-sm font-semibold">Plan-wise summary</h2>
         <p className="text-micro text-ink-muted">
           Revenue excl. GST, qualified and disqualified together. Open a plan to drill into
-          duration, region and BDE.
+          duration, region and BDE; click a heading to sort every level.
         </p>
       </div>
       {error && <p role="alert" className="p-4 text-sm text-disqualified">{error}</p>}
@@ -127,10 +138,10 @@ export function PlanSummary({ period }: { period: string }) {
           <table className="w-full text-sm">
             <thead className="bg-canvas text-left text-micro text-ink-muted">
               <tr>
-                <th className="p-3 font-medium">Plan</th>
-                <th className="p-3 text-right font-medium">Revenue (excl. GST)</th>
-                <th className="p-3 text-right font-medium">Payments</th>
-                <th className="p-3 text-right font-medium">Share</th>
+                <SortTh label="Plan" column="label" sort={sort} onSort={onSort} firstDir="asc" />
+                <SortTh label="Revenue (excl. GST)" column="revenue" sort={sort} onSort={onSort} align="right" />
+                <SortTh label="Units" column="payments" sort={sort} onSort={onSort} align="right" />
+                <SortTh label="Share" column="revenue" sort={sort} onSort={onSort} align="right" />
               </tr>
             </thead>
             <tbody>

@@ -296,13 +296,17 @@ function ConsolidatedView({ period, businessLevel }: { period: string; businessL
         />
       </div>
 
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={`mt-4 grid gap-4 sm:grid-cols-2 ${businessLevel ? "lg:grid-cols-5" : "lg:grid-cols-4"}`}>
         <Stat label="Target" value={`${count(data.target_units)} units`}
               sub={rupeesShort(data.target_revenue)} />
         <Stat label="Sold" value={`${count(data.gross_units)} units`}
               sub={rupeesShort(data.gross_revenue)} />
         <Stat label="Qualified" value={rupeesShort(data.qualified_revenue)}
               sub={`${count(data.achieved_units)} units counted`} tone="qualified" />
+        {businessLevel && (
+          <Stat label="Revenue" value={rupeesShort(data.qualified_revenue + data.disqualified_revenue)}
+                sub="Qualified + disqualified, excl. GST" />
+        )}
         <Stat label="Disqualified" value={rupeesShort(data.disqualified_revenue)}
               sub={`${count(data.disqualified_units)} sales`} tone="disqualified" />
       </div>
@@ -317,6 +321,12 @@ function ConsolidatedView({ period, businessLevel }: { period: string; businessL
         <h2 className="text-sm font-semibold">Totals for {data.scope_label}</h2>
         <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-2">
           <Line term="Qualified revenue (excl. GST)" value={rupees(data.qualified_revenue)} />
+          {businessLevel && (
+            <Line
+              term="Revenue (excl. GST, qualified + disqualified)"
+              value={rupees(data.qualified_revenue + data.disqualified_revenue)}
+            />
+          )}
           <Line term="Target revenue" value={rupees(data.target_revenue)} />
           <Line term="Revenue achievement" value={percent(data.revenue_pct)} />
           <Line term="Unit achievement" value={percent(data.unit_pct)} />
