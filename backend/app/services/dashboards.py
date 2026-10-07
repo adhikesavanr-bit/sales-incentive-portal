@@ -314,7 +314,16 @@ def _sales_sql(period: str) -> str:
 
 
 def _with(period: str) -> str:
-    return f"WITH q AS ({_latest_run(period)}), sales AS ({_sales_sql(period)})"
+    # A payment id can appear twice in a source table. The engine counts it
+    # once (the copy is marked DUPLICATE_PAYMENT_ID), so the join must take
+    # one source row per id, the one with a plan if either has: joining both
+    # would list the sale twice, once under "Unknown plan".
+    return (
+        f"WITH q AS ({_latest_run(period)}), "
+        f"sales AS (SELECT * FROM ({_sales_sql(period)}) WHERE TRUE "
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY payment_id "
+        "ORDER BY plan_title IS NULL) = 1)"
+    )
 
 
 @_cached
