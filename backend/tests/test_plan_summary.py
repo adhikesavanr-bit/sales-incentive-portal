@@ -41,3 +41,10 @@ def test_plan_summary_open_to_business_level(role, monkeypatch):
     monkeypatch.setattr(router, "can_see_month", lambda p, period: True)
     monkeypatch.setattr(router.dashboards, "plan_summary", lambda p, period: [{"plan_title": "A"}])
     assert router.my_plan_summary("2026-08", _principal(role)) == [{"plan_title": "A"}]
+
+
+def test_sales_join_takes_one_source_row_per_payment_id(monkeypatch):
+    monkeypatch.setattr(dashboards, "_latest_run", lambda period: "SELECT 1")
+    monkeypatch.setattr(dashboards, "_sales_sql", lambda period: "SELECT 2")
+    sql = dashboards._with("2026-08")
+    assert "PARTITION BY payment_id" in sql and "plan_title IS NULL" in sql
