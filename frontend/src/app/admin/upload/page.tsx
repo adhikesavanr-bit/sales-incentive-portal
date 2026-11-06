@@ -7,14 +7,15 @@ import { CouponStep } from "@/components/CouponStep";
 import { DownloadButton } from "@/components/DownloadButton";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
+import { useMonth } from "@/lib/period";
 import {
   api, type MonthStatus, type RecalcResult, type SourceResolution, type UploadSummary,
 } from "@/lib/api";
-import { count, monthLabel, rupeesShort, defaultPeriod } from "@/lib/format";
+import { count, monthLabel, rupeesShort } from "@/lib/format";
 
 
 export default function UploadPage() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = useMonth();
   const [file, setFile] = useState<File | null>(null);
   const [summary, setSummary] = useState<UploadSummary | null>(null);
   const [busy, setBusy] = useState<string | null>(null);

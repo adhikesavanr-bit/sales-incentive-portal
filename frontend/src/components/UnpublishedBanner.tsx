@@ -1,6 +1,6 @@
 "use client";
 
-import { monthLabel } from "@/lib/format";
+import { selectionLabel } from "@/lib/period";
 
 /**
  * Shown to Finance and admins while they review a month the sales line cannot
@@ -17,8 +17,8 @@ export function UnpublishedBanner({
   return (
     <p role="status" className="panel mt-6 bg-disqualified-wash p-4 text-sm">
       <span className="font-semibold text-disqualified">Not published.</span>{" "}
-      {monthLabel(period)} is {state}. Only Finance and admins can see these figures; the
-      team sees them once the month is approved.
+      {selectionLabel(period)} {/^\d{4}-\d{2}$/.test(period) ? `is ${state}` : "includes months that are not approved yet"}. Only Finance and
+      admins can see these figures; the team sees them once the month is approved.
     </p>
   );
 }

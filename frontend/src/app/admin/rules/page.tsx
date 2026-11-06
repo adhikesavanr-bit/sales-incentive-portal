@@ -5,8 +5,9 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
+import { useMonth } from "@/lib/period";
 import { api, type CouponRule, type SlabRow } from "@/lib/api";
-import { count, monthLabel, percent, defaultPeriod } from "@/lib/format";
+import { count, monthLabel, percent } from "@/lib/format";
 
 /**
  * The rules behind every number in the app, in one place.
@@ -27,6 +28,9 @@ const SCOPE_LABELS: Record<string, string> = {
 };
 
 
+// Only these roles see which date a rule came into force.
+const SEES_IN_FORCE = new Set(["SUPER_ADMIN", "FINANCE_ADMIN", "BUSINESS_HEAD"]);
+
 function firstOfNextMonth(): string {
   const d = new Date();
   d.setMonth(d.getMonth() + 1, 1);
@@ -34,13 +38,17 @@ function firstOfNextMonth(): string {
 }
 
 export default function RulesPage() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = useMonth();
   const [coupons, setCoupons] = useState<CouponRule[]>([]);
   const [scopes, setScopes] = useState<Record<string, SlabRow[]>>({});
   const [editable, setEditable] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [role, setRole] = useState("");
+  const showInForce = SEES_IN_FORCE.has(role);
   const dialog = useFormDialog();
+
+  useEffect(() => { api.me().then((m) => setRole(m.role)).catch(() => {}); }, []);
 
   function load() {
     setError(null);
@@ -149,7 +157,7 @@ export default function RulesPage() {
                 <th className="p-3 text-right font-medium">Clubbed sales to qualify</th>
                 <th className="p-3 text-right font-medium">Utilisation</th>
                 <th className="p-3 text-right font-medium">Own sales needed</th>
-                <th className="p-3 font-medium">In force from</th>
+                {showInForce && <th className="p-3 font-medium">In force from</th>}
                 <th className="p-3" />
               </tr>
             </thead>
@@ -163,7 +171,7 @@ export default function RulesPage() {
                     {percent(r.min_sales / r.required_sales, 0)}
                   </td>
                   <td className="p-3 text-right font-medium">{count(r.min_own_sales)}</td>
-                  <td className="p-3 text-ink-muted">{r.effective_from ?? "—"}</td>
+                  {showInForce && <td className="p-3 text-ink-muted">{r.effective_from ?? "—"}</td>}
                   <td className="p-3 text-right">
                     {editable && (
                       <button onClick={() => editCoupon(r)} className="text-sm underline">
@@ -200,7 +208,7 @@ export default function RulesPage() {
                 <tr>
                   <th className="p-3 font-medium">Achievement at or above</th>
                   <th className="p-3 text-right font-medium">Rate</th>
-                  <th className="p-3 font-medium">In force from</th>
+                  {showInForce && <th className="p-3 font-medium">In force from</th>}
                   <th className="p-3" />
                 </tr>
               </thead>
@@ -213,7 +221,7 @@ export default function RulesPage() {
                         : percent(slab.threshold, 0)}
                     </td>
                     <td className="p-3 text-right font-medium">{percent(slab.rate, 2)}</td>
-                    <td className="p-3 text-ink-muted">{slab.effective_from ?? "—"}</td>
+                    {showInForce && <td className="p-3 text-ink-muted">{slab.effective_from ?? "—"}</td>}
                     <td className="p-3 text-right">
                       {editable && (
                         <button
@@ -232,12 +240,6 @@ export default function RulesPage() {
         </section>
       ))}
 
-      <p className="mt-6 text-sm text-ink-muted">
-        Every change is versioned from the date you choose and written to the
-        audit log with a reason. Months that are already approved or locked keep
-        the rules they were calculated under; an edit dated inside one is
-        refused.
-      </p>
       {dialog.element}
     </AppShell>
   );

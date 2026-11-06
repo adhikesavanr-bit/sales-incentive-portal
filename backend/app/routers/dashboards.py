@@ -254,3 +254,106 @@ def rollup(
     if groups_f:
         out["groups"] = groups_f.result()
     return _mark_unpublished(out, period)
+
+
+RANGE_ROLES = frozenset({Role.BUSINESS_HEAD, Role.FINANCE_ADMIN, Role.SUPER_ADMIN})
+
+
+def _require_ranges(principal: Principal) -> None:
+    """Quarter and year views are for business heads, Finance and super admins."""
+    if principal.role not in RANGE_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "Quarter and year views are not available for your role.")
+
+
+def _months_between(start: str, end: str) -> list[str]:
+    y, m = map(int, start.split("-"))
+    ey, em = map(int, end.split("-"))
+    out = []
+    while (y, m) <= (ey, em):
+        out.append(f"{y}-{m:02d}")
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    if not out or len(out) > 12:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "A range covers 1 to 12 months, start before end.")
+    return out
+
+
+def load_range_months(principal: Principal, visible: list[str],
+                      group_by: str | None = None) -> list[tuple[str, dict]]:
+    """Each visible month's roll-up, oldest first, dropping months with no figures."""
+    def load(m: str) -> dict:
+        s_f = _pool.submit(dashboards.summary, principal, m)
+        r_f = _pool.submit(dashboards.team_rows, principal, m)
+        g_f = _pool.submit(dashboards.group_by, principal, m, group_by) if group_by else None
+        return {"summary": s_f.result(), "employees": r_f.result(),
+                "groups": g_f.result() if g_f else None}
+
+    loaded = list(zip(visible, [load(m) for m in visible]))
+    # A month with no calculated rows yet (e.g. in the future) adds nothing.
+    return [(m, d) for m, d in loaded if any(e.get("target_units") is not None
+            or e.get("total_incentive") is not None for e in d["employees"])]
+
+
+@router.get("/rollup/range")
+def rollup_range(
+    start: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    end: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    group_by: str | None = Query(None, pattern=r"^(region|zone|submanager|rm)$"),
+    principal: Principal = Depends(require(Permission.VIEW_TEAM)),
+):
+    """Quarter or financial-year view: the monthly roll-ups added up.
+
+    Only months this caller may see are included, and the response says which
+    were left out, so a total is never mistaken for a full period.
+    """
+    _require_ranges(principal)
+    months = _months_between(start, end)
+    visible = [m for m in months if can_see_month(principal, m)]
+
+    with_data = load_range_months(principal, visible, group_by)
+    out = {
+        "period": f"{start}..{end}",
+        "scope": principal.role.value,
+        "months_included": [m for m, _ in with_data],
+        "months_missing": [m for m in months if m not in {x for x, _ in with_data}],
+        "is_range": True,
+        **dashboards.merge_months([d for _, d in with_data]),
+    }
+    if not group_by:
+        out.pop("groups", None)
+    unpublished = [m for m, _ in with_data if not month.is_published(m)]
+    if unpublished:
+        out["unpublished"] = True
+        out["month_status"] = month.get_status(unpublished[0]).value
+    return out
+
+
+@router.get("/me/consolidated/range")
+def my_consolidated_range(
+    start: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    end: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    principal: Principal = Depends(require(Permission.VIEW_TEAM)),
+):
+    """My performance for a quarter or financial year (business head / Finance)."""
+    _require_ranges(principal)
+    months = _months_between(start, end)
+    visible = [m for m in months if can_see_month(principal, m)]
+    futures = {m: (_pool.submit(dashboards.consolidated, principal, m),
+                   _pool.submit(dashboards.scope_trend, principal, m)) for m in visible}
+    rows = [(m, c.result(), t.result()) for m, (c, t) in futures.items()]
+    with_data = [(m, r, t) for m, r, t in rows if r is not None]
+    base = {"period": f"{start}..{end}", "scope_label": _scope_label(principal),
+            "is_range": True,
+            "months_included": [m for m, _, _ in with_data],
+            "months_missing": [m for m in months if m not in {x for x, _, _ in with_data}]}
+    if not with_data:
+        return {**base, "status": "NOT_CALCULATED",
+                "message": "Nothing is published for this period yet."}
+    out = {**base, **dashboards.merge_consolidated([r for _, r, _ in with_data]),
+           "trend": [d for _, _, t in with_data for d in t]}
+    unpublished = [m for m, _, _ in with_data if not month.is_published(m)]
+    if unpublished:
+        out["unpublished"] = True
+        out["month_status"] = month.get_status(unpublished[0]).value
+    return out

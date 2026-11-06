@@ -468,3 +468,100 @@ def coupon_analysis(employee_id: str, period: str) -> list[dict]:
         """,
         {"p": period, "id": employee_id},
     )
+
+
+# ---- Quarter and financial-year roll-ups -----------------------------------
+#
+# A range is the monthly figures added up, month by month, so each month keeps
+# the hierarchy it had at the time (a transfer in August does not move April's
+# sales). Nothing is recalculated: it reads the same cached monthly queries.
+
+_ADDITIVE_ROW = (
+    "target_units", "achieved_units", "target_revenue", "qualified_revenue",
+    "disqualified_revenue", "total_incentive", "net_payable",
+)
+_ADDITIVE_GROUP = (
+    "target_units", "achieved_units", "target_revenue", "gross_revenue",
+    "qualified_revenue", "disqualified_revenue", "incentive_liability", "net_payable",
+)
+
+
+def _num(v) -> float:
+    return float(v or 0)
+
+
+def _ratios(r: dict) -> None:
+    """Recompute achievement from the summed figures, never by averaging months."""
+    r["unit_pct"] = _num(r.get("achieved_units")) / _num(r.get("target_units")) \
+        if _num(r.get("target_units")) else None
+    r["revenue_pct"] = _num(r.get("qualified_revenue")) / _num(r.get("target_revenue")) \
+        if _num(r.get("target_revenue")) else None
+    # Monthly plans pay on the higher of units and revenue achievement.
+    cands = [p for p in (r["unit_pct"], r["revenue_pct"]) if p is not None]
+    r["base_pct"] = max(cands) if cands else None
+
+
+def merge_months(per_month: list[dict]) -> dict:
+    """per_month: [{"summary":…, "employees":[…], "groups":[…]|None}] oldest first."""
+    people: dict[str, dict] = {}
+    for m in per_month:
+        for e in m["employees"]:
+            cur = people.get(e["employee_id"])
+            if cur is None:
+                cur = people[e["employee_id"]] = {k: 0.0 for k in _ADDITIVE_ROW}
+                cur["_active"] = False
+            for k in _ADDITIVE_ROW:
+                cur[k] += _num(e.get(k))
+            cur["_active"] = cur["_active"] or bool(e.get("is_active"))
+            # Identity and balance come from the latest month the person appears in.
+            for k in ("employee_id", "full_name", "designation", "region", "zone",
+                      "submanager_id", "rm_id", "accumulation"):
+                cur[k] = e.get(k)
+    employees = []
+    for cur in people.values():
+        cur["is_active"] = cur.pop("_active")
+        cur["arpu"] = None
+        _ratios(cur)
+        employees.append(cur)
+    employees.sort(key=lambda r: (r["base_pct"] is None, -(r["base_pct"] or 0)))
+
+    summary = {k: sum(_num(m["summary"].get(k)) for m in per_month)
+               for k in ("target_units", "achieved_units", "target_revenue", "gross_revenue",
+                         "qualified_revenue", "disqualified_revenue",
+                         "incentive_liability", "net_payable")}
+    summary["headcount"] = sum(1 for e in employees if e["is_active"])
+    q, d = summary["qualified_revenue"], summary["disqualified_revenue"]
+    summary["achievement_pct"] = q / summary["target_revenue"] if summary["target_revenue"] else 0.0
+    summary["qualification_pct"] = q / (q + d) if q + d else 0.0
+
+    out = {"summary": summary, "employees": employees}
+    if any(m.get("groups") is not None for m in per_month):
+        groups: dict = {}
+        for m in per_month:
+            for g in m.get("groups") or []:
+                cur = groups.setdefault(g["group_key"], {k: 0.0 for k in _ADDITIVE_GROUP})
+                cur["headcount"] = max(cur.get("headcount", 0), int(g.get("headcount") or 0))
+                for k in _ADDITIVE_GROUP:
+                    cur[k] += _num(g.get(k))
+                cur["group_key"] = g["group_key"]
+                cur["group_name"] = g.get("group_name") or cur.get("group_name")
+        out["groups"] = sorted(groups.values(), key=lambda g: -g["qualified_revenue"])
+    return out
+
+
+def merge_consolidated(per_month: list[dict]) -> dict:
+    """Add up monthly `consolidated` rows (oldest first); ratios from the sums."""
+    f = {c: sum(_num(m.get(c)) for m in per_month) for c in _SUMMED}
+    # Accumulation is a running balance, not a flow: take the latest month's.
+    f["accumulation"] = _num(per_month[-1].get("accumulation"))
+    rev = f["qualified_revenue"] + f["disqualified_revenue"]
+    return {
+        # People can repeat across months, so the largest month is the honest floor.
+        "people": max(int(m.get("people") or 0) for m in per_month),
+        "headcount": max(int(m.get("headcount") or 0) for m in per_month),
+        **f,
+        "unit_pct": f["achieved_units"] / f["target_units"] if f["target_units"] else 0.0,
+        "revenue_pct": f["qualified_revenue"] / f["target_revenue"] if f["target_revenue"] else 0.0,
+        "arpu": f["gross_net_revenue"] / f["gross_units"] if f["gross_units"] else 0.0,
+        "payout_pct": f["total_incentive"] / rev if rev else 0.0,
+    }

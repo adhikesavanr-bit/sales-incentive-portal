@@ -5,9 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { useFormDialog } from "@/components/FormDialog";
 import { PeriodPicker } from "@/components/PeriodPicker";
+import { useMonth } from "@/lib/period";
 import { SearchBox, matches } from "@/components/Sortable";
 import { api, cachedMe, type BulkTargetResult, type Me, type TargetRow } from "@/lib/api";
-import { count, monthLabel, rupeesShort, defaultPeriod } from "@/lib/format";
+import { count, monthLabel, rupeesShort } from "@/lib/format";
 
 const ARPU = 33000;
 
@@ -34,7 +35,7 @@ function downloadTemplate(rows: TargetRow[], period: string) {
 }
 
 export default function TargetsPage() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [period, setPeriod] = useMonth();
   const [rows, setRows] = useState<TargetRow[]>([]);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");

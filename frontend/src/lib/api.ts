@@ -223,6 +223,10 @@ export const api = {
   myConsolidated: (period: string) =>
     request<Consolidated>(`/api/me/consolidated?period=${period}`),
 
+  /** Quarter / financial year of the above. Business heads and Finance only. */
+  myConsolidatedRange: (start: string, end: string) =>
+    request<Consolidated>(`/api/me/consolidated/range?start=${start}&end=${end}`),
+
   /** Business heads and admins only. */
   myPlanSummary: (period: string) =>
     request<PlanSummaryRow[]>(`/api/me/plan-summary?period=${period}`),
@@ -247,6 +251,12 @@ export const api = {
   rollup: (period: string, groupBy?: string) =>
     request<Rollup>(
       `/api/rollup/dashboard?period=${period}${groupBy ? `&group_by=${groupBy}` : ""}`,
+    ),
+
+  /** Quarter or financial year: the monthly roll-ups added up. */
+  rollupRange: (start: string, end: string, groupBy?: string) =>
+    request<Rollup>(
+      `/api/rollup/range?start=${start}&end=${end}${groupBy ? `&group_by=${groupBy}` : ""}`,
     ),
 
   periodStatus: (period: string) =>
@@ -394,6 +404,13 @@ export const api = {
   exportCsv: (report: string, period: string) =>
     download(`/api/export/${report}?period=${period}`, `${report}-${period}.csv`),
 
+  /** A quarter or financial year as an Excel workbook. Business heads, Finance, super admins. */
+  exportRangeXlsx: (start: string, end: string, label: string) =>
+    download(
+      `/api/export/range?start=${start}&end=${end}&label=${encodeURIComponent(label)}`,
+      `incentive-${label.replace(/[ ·]+/g, "-")}.xlsx`,
+    ),
+
   /** One person's statement. Omit employeeId for the caller's own. */
   exportStatementPdf: (period: string, employeeId?: string) =>
     download(
@@ -465,6 +482,9 @@ export interface Consolidated {
   unpublished?: boolean;
   message?: string;
   period: string;
+  is_range?: boolean;
+  months_included?: string[];
+  months_missing?: string[];
   scope_label: string;
   people: number;
   headcount: number;
@@ -542,6 +562,9 @@ export interface Rollup {
   message?: string;
   month_status?: MonthStatus;
   unpublished?: boolean;
+  is_range?: boolean;
+  months_included?: string[];
+  months_missing?: string[];
   summary: Record<string, number>;
   employees: EmployeeMetricRow[];
   // group_name is set when the group is a person (sub-manager, RM).

@@ -10,11 +10,13 @@ import { CouponAnalysis } from "@/components/CouponAnalysis";
 import { DownloadButton } from "@/components/DownloadButton";
 import { api, type Breakdown, type Transaction } from "@/lib/api";
 import { count, monthLabel, percent, rupees } from "@/lib/format";
+import { useMonth } from "@/lib/period";
 
 /** Drill-down: team -> employee -> transaction. */
 export default function EmployeeDetailPage() {
   const { employeeId } = useParams<{ employeeId: string }>();
-  const period = useSearchParams().get("period") ?? "";
+  const [sharedPeriod] = useMonth();
+  const period = useSearchParams().get("period") ?? sharedPeriod;
   const [data, setData] = useState<Breakdown | null>(null);
   const [sales, setSales] = useState<Transaction[]>([]);
   const [error, setError] = useState<string | null>(null);
