@@ -9,7 +9,9 @@ from fastapi.responses import Response, StreamingResponse
 
 from app.auth.deps import require
 from app.auth.rbac import Permission, Principal
-from app.routers.dashboards import _authorise_target, can_see_month
+from app.routers.dashboards import (
+    _authorise_target, _months_between, _require_ranges, can_see_month, load_range_months,
+)
 from app.services import audit, dashboards, month, statement_pdf
 from app.services import employees as employee_service
 
@@ -79,6 +81,82 @@ def export_statement(
             "Content-Disposition":
                 f'attachment; filename="incentive-{target}-{period}.pdf"'
         },
+    )
+
+
+@router.get("/range")
+def export_range(
+    start: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    end: str = Query(..., pattern=r"^\d{4}-\d{2}$"),
+    label: str = Query("range", pattern=r"^[A-Za-z0-9 ._·-]{1,40}$"),
+    principal: Principal = Depends(require(Permission.EXPORT_SCOPED)),
+):
+    """A quarter or financial year as an Excel workbook: totals, people, month by month."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    _require_ranges(principal)
+    months = _months_between(start, end)
+    data = load_range_months(principal, [m for m in months if can_see_month(principal, m)])
+    if not data:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Nothing calculated for this period yet.")
+    merged = dashboards.merge_months([d for _, d in data])
+    included = [m for m, _ in data]
+
+    wb = Workbook()
+    bold = Font(bold=True)
+
+    def sheet(ws, headers, rows):
+        ws.append(headers)
+        for c in ws[1]:
+            c.font = bold
+        for r in rows:
+            ws.append(r)
+        ws.freeze_panes = "A2"
+        for i, h in enumerate(headers, 1):
+            ws.column_dimensions[ws.cell(1, i).column_letter].width = max(14, len(h) + 2)
+
+    s = merged["summary"]
+    ws = wb.active
+    ws.title = "Summary"
+    sheet(ws, ["Measure", "Value"], [
+        ["Period", f"{start} to {end}"],
+        ["Months included", ", ".join(included)],
+        ["Months not included", ", ".join(m for m in months if m not in included) or "—"],
+        ["Headcount (with sales)", s["headcount"]],
+        ["Target revenue", s["target_revenue"]],
+        ["Qualified revenue", s["qualified_revenue"]],
+        ["Disqualified revenue", s["disqualified_revenue"]],
+        ["Achievement %", s["achievement_pct"]],
+        ["Qualification %", s["qualification_pct"]],
+        ["Incentive liability", s["incentive_liability"]],
+        ["Net payable", s["net_payable"]],
+    ])
+
+    people_cols = ["employee_id", "full_name", "designation", "region", "zone",
+                   "target_units", "achieved_units", "target_revenue", "qualified_revenue",
+                   "disqualified_revenue", "base_pct", "total_incentive", "net_payable"]
+    sheet(wb.create_sheet("People"), people_cols,
+          [[e.get(c) for c in people_cols] for e in merged["employees"]])
+
+    # One row per person per month, so a total can be traced to the month it came from.
+    month_cols = ["period", "employee_id", "full_name", "region", "target_revenue",
+                  "qualified_revenue", "disqualified_revenue", "base_pct", "total_incentive"]
+    sheet(wb.create_sheet("By month"), month_cols,
+          [[m] + [e.get(c) for c in month_cols[1:]]
+           for m, d in data for e in d["employees"]
+           if e.get("target_units") is not None or e.get("total_incentive") is not None])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    audit.record(principal.email, "EXPORT", entity_type="report",
+                 affected_record=f"range:{start}..{end}",
+                 new_value={"rows": len(merged["employees"]), "format": "xlsx"})
+    safe = label.replace(" ", "-").replace("·", "")
+    return Response(
+        buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="incentive-{safe}.xlsx"'},
     )
 
 

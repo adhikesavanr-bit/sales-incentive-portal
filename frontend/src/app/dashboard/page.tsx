@@ -10,11 +10,12 @@ import { DownloadButton } from "@/components/DownloadButton";
 import { PlanSummary } from "@/components/PlanSummary";
 import { PayoutHeadline } from "@/components/PayoutHeadline";
 import { PeriodPicker } from "@/components/PeriodPicker";
+import { canUseRanges, rangeBounds, selectionLabel, usePeriodFor } from "@/lib/period";
 import { SlabRuler } from "@/components/SlabRuler";
 import Link from "next/link";
 
 import { api, type Breakdown, type Consolidated, type Me, type Transaction } from "@/lib/api";
-import { count, monthLabel, percent, rupees, rupeesShort, defaultPeriod } from "@/lib/format";
+import { count, monthLabel, percent, rupees, rupeesShort } from "@/lib/format";
 
 // recharts is loaded on its own, after the figures render.
 const DailySalesChart = dynamic(() => import("@/components/DailySalesChart"), {
@@ -42,13 +43,13 @@ type View = "me" | "team";
 
 
 export default function DashboardPage() {
-  const [period, setPeriod] = useState(defaultPeriod());
   const [data, setData] = useState<Breakdown | null>(null);
   const [sales, setSales] = useState<Transaction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<"ALL" | "QUALIFIED" | "DISQUALIFIED">("ALL");
   const [me, setMe] = useState<Me | null>(null);
   const [view, setView] = useState<View>("me");
+  const [period, setPeriod] = usePeriodFor(me?.role);
 
   useEffect(() => {
     api.me().then(setMe).catch(() => {});
@@ -72,7 +73,7 @@ export default function DashboardPage() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">My performance</h1>
-          <p className="text-sm text-ink-muted">{monthLabel(period)}</p>
+          <p className="text-sm text-ink-muted">{selectionLabel(period)}</p>
         </div>
         <div className="flex flex-wrap items-start gap-2">
           {CAN_TOGGLE.has(role) && (
@@ -92,7 +93,7 @@ export default function DashboardPage() {
               ))}
             </div>
           )}
-          <PeriodPicker value={period} onChange={setPeriod} />
+          <PeriodPicker value={period} onChange={setPeriod} withRanges={canUseRanges(role)} />
           {mode === "me" && data && !data.status && (
             <DownloadButton onDownload={() => api.exportStatementPdf(period)}>
               Export PDF
@@ -256,13 +257,17 @@ export default function DashboardPage() {
 /** The caller and everyone below them, added up. No sales list: at this scale
  * it belongs on My team, one person at a time. */
 function ConsolidatedView({ period, businessLevel }: { period: string; businessLevel: boolean }) {
+  const ranged = !!rangeBounds(period);
   const [data, setData] = useState<Consolidated | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setData(null);
     setError(null);
-    api.myConsolidated(period).then(setData).catch((e) => setError(e.message));
+    const b = rangeBounds(period);
+    (b ? api.myConsolidatedRange(b.start, b.end) : api.myConsolidated(period))
+      .then(setData)
+      .catch((e) => setError(e.message));
   }, [period]);
 
   if (error) {
@@ -285,8 +290,14 @@ function ConsolidatedView({ period, businessLevel }: { period: string; businessL
     <>
       {data.unpublished && <UnpublishedBanner period={period} monthStatus={data.month_status} />}
       <p className="mt-6 text-sm text-ink-muted">
-        {data.scope_label} · {count(data.people)} people with figures this month
+        {data.scope_label} · {count(data.people)} people with figures {ranged ? "in the period" : "this month"}
       </p>
+      {ranged && (data.months_missing?.length ?? 0) > 0 && (
+        <p role="status" className="panel mt-3 bg-canvas p-3 text-sm text-ink-muted">
+          Totals cover {data.months_included?.map(monthLabel).join(", ")}. Not included yet:{" "}
+          {data.months_missing!.map(monthLabel).join(", ")}.
+        </p>
+      )}
       <div className="mt-3">
         <PayoutHeadline
           label={`Incentive earned · ${data.scope_label}`}
@@ -348,7 +359,7 @@ function ConsolidatedView({ period, businessLevel }: { period: string; businessL
         </p>
       </section>
 
-      {businessLevel && <PlanSummary period={period} />}
+      {businessLevel && !ranged && <PlanSummary period={period} />}
 
       {data.trend && data.trend.length > 0 && (
         <section className="panel mt-4 p-6">

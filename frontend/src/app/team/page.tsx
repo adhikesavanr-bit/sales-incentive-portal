@@ -7,11 +7,12 @@ import { AppShell } from "@/components/AppShell";
 import { UnpublishedBanner } from "@/components/UnpublishedBanner";
 import { DownloadButton } from "@/components/DownloadButton";
 import { PeriodPicker } from "@/components/PeriodPicker";
+import { canUseRanges, isRange, rangeBounds, selectionLabel, usePeriodFor } from "@/lib/period";
 import {
   SearchBox, SortTh, matches, sortRows, useSort, type SortDir, type SortState,
 } from "@/components/Sortable";
-import { api, type EmployeeMetricRow, type Rollup } from "@/lib/api";
-import { count, monthLabel, percent, rupeesShort, defaultPeriod } from "@/lib/format";
+import { api, cachedMe, type EmployeeMetricRow, type Me, type Rollup } from "@/lib/api";
+import { count, monthLabel, percent, rupeesShort } from "@/lib/format";
 
 /**
  * One page serves manager, RM, ZM and business head. The backend decides how
@@ -74,7 +75,11 @@ function personMatches(e: EmployeeMetricRow, q: string) {
 }
 
 export default function TeamPage() {
-  const [period, setPeriod] = useState(defaultPeriod());
+  const [me, setMe] = useState<Me | null>(() => cachedMe());
+  useEffect(() => {
+    api.me().then(setMe).catch(() => {});
+  }, []);
+  const [period, setPeriod] = usePeriodFor(me?.role);
   const [groupBy, setGroupBy] = useState("");
   const [data, setData] = useState<Rollup | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,14 +104,19 @@ export default function TeamPage() {
   }
 
   useEffect(() => {
+    if (!me) return; // the period depends on the role, so wait for it
     setData(null);
     setError(null);
-    api
-      .rollup(period, groupBy || undefined)
+    const b = rangeBounds(period);
+    (b
+      ? api.rollupRange(b.start, b.end, groupBy || undefined)
+      : api.rollup(period, groupBy || undefined)
+    )
       .then(setData)
       .catch((e) => setError(e.message));
-  }, [period, groupBy]);
+  }, [period, groupBy, me]);
 
+  const ranged = isRange(period);
   const s = data?.summary ?? {};
 
   const visiblePeople = (data?.employees ?? []).filter((e) => personMatches(e, q));
@@ -130,13 +140,23 @@ export default function TeamPage() {
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">My team</h1>
-          <p className="text-sm text-ink-muted">{monthLabel(period)}</p>
+          <p className="text-sm text-ink-muted">{selectionLabel(period)}</p>
         </div>
         <div className="flex items-center gap-2">
-          <PeriodPicker value={period} onChange={setPeriod} />
-          {!data?.status && (
+          <PeriodPicker value={period} onChange={setPeriod} withRanges={canUseRanges(me?.role)} />
+          {!data?.status && !ranged && (
             <DownloadButton onDownload={() => api.exportCsv("performance", period)}>
               Export CSV
+            </DownloadButton>
+          )}
+          {!data?.status && ranged && (
+            <DownloadButton
+              onDownload={() => {
+                const b = rangeBounds(period)!;
+                return api.exportRangeXlsx(b.start, b.end, selectionLabel(period));
+              }}
+            >
+              Export Excel
             </DownloadButton>
           )}
         </div>
@@ -150,13 +170,24 @@ export default function TeamPage() {
 
       {data?.unpublished && <UnpublishedBanner period={period} monthStatus={data.month_status} />}
 
+      {ranged && data && !data.status && (data.months_missing?.length ?? 0) > 0 && (
+        <p role="status" className="panel mt-6 bg-canvas p-3 text-sm text-ink-muted">
+          Totals cover {data.months_included?.length ?? 0} month
+          {data.months_included?.length === 1 ? "" : "s"}
+          {data.months_included?.length
+            ? ` (${data.months_included.map(monthLabel).join(", ")})`
+            : ""}
+          . Not included yet: {data.months_missing!.map(monthLabel).join(", ")}.
+        </p>
+      )}
+
       {data?.status ? (
         <div className="panel mt-6 p-10 text-center text-sm text-ink-muted">{data.message}</div>
       ) : (
       <>
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Kpi label="Headcount" value={count(s.headcount as number)}
-             sub="with sales this month" />
+             sub={ranged ? "with sales in the period" : "with sales this month"} />
         <Kpi label="Target" value={rupeesShort(s.target_revenue as number)} />
         <Kpi label="Qualified revenue" value={rupeesShort(s.qualified_revenue as number)}
              sub={percent(s.achievement_pct as number) + " of target"} />
@@ -285,12 +316,16 @@ export default function TeamPage() {
               {people.sorted.map((e) => (
                 <tr key={e.employee_id} className="border-t border-rule">
                   <td className="p-3">
-                    <Link
-                      href={`/team/${e.employee_id}?period=${period}`}
-                      className="font-medium underline decoration-rule underline-offset-2"
-                    >
-                      {e.full_name}
-                    </Link>
+                    {ranged ? (
+                      <span className="font-medium">{e.full_name}</span>
+                    ) : (
+                      <Link
+                        href={`/team/${e.employee_id}?period=${period}`}
+                        className="font-medium underline decoration-rule underline-offset-2"
+                      >
+                        {e.full_name}
+                      </Link>
+                    )}
                     <div className="text-micro text-ink-faint">
                       {e.employee_id} · {e.designation ?? "—"}
                       {e.is_active === false && " · no sales"}
@@ -308,7 +343,7 @@ export default function TeamPage() {
               {data && data.employees.length === 0 && (
                 <tr>
                   <td colSpan={8} className="p-8 text-center text-ink-muted">
-                    Nothing calculated for {monthLabel(period)} yet.
+                    Nothing calculated for {selectionLabel(period)} yet.
                   </td>
                 </tr>
               )}
@@ -362,12 +397,16 @@ function GroupMembers({
         {sorted.map((e) => (
           <tr key={e.employee_id} className="border-t border-rule">
             <td className="py-2 pl-8 pr-3">
-              <Link
-                href={`/team/${e.employee_id}?period=${period}`}
-                className="font-medium underline decoration-rule underline-offset-2"
-              >
-                {e.full_name}
-              </Link>
+              {isRange(period) ? (
+                <span className="font-medium">{e.full_name}</span>
+              ) : (
+                <Link
+                  href={`/team/${e.employee_id}?period=${period}`}
+                  className="font-medium underline decoration-rule underline-offset-2"
+                >
+                  {e.full_name}
+                </Link>
+              )}
               <span className="ml-2 text-micro text-ink-faint">
                 {e.employee_id} · {e.designation ?? "—"}
               </span>
